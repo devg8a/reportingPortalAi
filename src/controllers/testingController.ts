@@ -509,3 +509,48 @@ export const klaviyoCampaignReportMultiMetric = async(req, res) => {
 	}
 }
 
+export const klaviyoCampaignDailyReport = async(req, res) => {
+	try {
+		const { accountkey, startDate, endDate, metricId, timezone } = req.body;
+		
+		if (!accountkey) {
+			return res.status(400).json({ 
+				status_code: 400, 
+				success: false, 
+				message: 'accountkey is required' 
+			});
+		}
+		
+		if (!startDate || !endDate) {
+			return res.status(400).json({ 
+				status_code: 400, 
+				success: false, 
+				message: 'startDate and endDate are required (format: YYYY-MM-DD)' 
+			});
+		}
+
+		const klaviyoLib = new klaviyoService(accountkey);
+		const campaignReport = await klaviyoLib.getCampaignDailyReport({
+			startDate,
+			endDate,
+			metricId,
+			timezone
+		});
+
+		res.status(200).json({ 
+			status_code: 200, 
+			success: true, 
+			message: 'Klaviyo campaign daily report fetched successfully.', 
+			data: campaignReport 
+		});
+	} catch (error) {
+		console.log('error==>', error);
+		res.status(422).json({ 
+			status_code: 422, 
+			success: false, 
+			message: 'Error fetching Klaviyo campaign daily report.', 
+			data: error instanceof Error ? error.message : error 
+		});
+	}
+}
+

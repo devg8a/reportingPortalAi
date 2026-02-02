@@ -31,6 +31,15 @@ interface CampaignDailyReport {
     daily_metrics: DailyMetricRecord[];
 }
 
+interface CampaignDailyRecord {
+    date: string;
+    campaign_id: string;
+    campaign_name: string;
+    count: number;
+    unique: number;
+    sum_value: number;
+}
+
 interface MetricAggregateResponseData {
     attributes?: {
         dates?: (string | Date)[];
@@ -182,6 +191,58 @@ export class klaviyoService{
         }
     }
 
+    async getCampaignDailyReport(requestData: CampaignReportRequest): Promise<CampaignDailyRecord[]> {
+        try {
+            const { startDate, endDate, metricId, timezone = 'UTC' } = requestData;
+            
+            const metricsApi = new MetricsApi(this.session);
+            
+            let targetMetricId = metricId;
+            if (!targetMetricId) {
+                const metricsList = await metricsApi.getMetrics();
+                const receivedEmailMetric = metricsList?.body?.data?.find(
+                    (m: { attributes?: { name?: string } }) => m.attributes?.name === 'Received Email'
+                );
+                if (receivedEmailMetric) {
+                    targetMetricId = receivedEmailMetric.id;
+                } else {
+                    throw new Error('Could not find Received Email metric. Please provide a metricId.');
+                }
+            }
+
+            const startDateTime = `${startDate}T00:00:00`;
+            const endDateTime = `${endDate}T23:59:59`;
+
+            const metricAggregateQuery: MetricAggregateQuery = {
+                data: {
+                    type: 'metric-aggregate',
+                    attributes: {
+                        metricId: targetMetricId,
+                        measurements: ['count', 'unique', 'sum_value'],
+                        interval: 'day',
+                        pageSize: 500,
+                        by: ['$attributed_message', 'Campaign Name'],
+                        filter: [
+                            `greater-or-equal(datetime,${startDateTime})`,
+                            `less-than(datetime,${endDateTime})`
+                        ],
+                        timezone: timezone
+                    }
+                }
+            };
+
+            const response = await metricsApi.queryMetricAggregates(metricAggregateQuery);
+            const rawData = response?.body?.data as MetricAggregateResponseData;
+
+            const campaignDailyRecords = this.transformToCampaignDailyRecords(rawData);
+
+            return campaignDailyRecords;
+        } catch (error) {
+            logger.error(error, 'Error in klaviyo getCampaignDailyReport API');
+            throw new Error('Error in klaviyo getCampaignDailyReport API');
+        }
+    }
+
     async getCampaignReportMultiMetric(requestData: CampaignReportRequest) {
         try {
             const { startDate, endDate, timezone = 'UTC' } = requestData;
@@ -290,6 +351,57 @@ export class klaviyoService{
             logger.error(error, 'Error in klaviyo getCampaignReportMultiMetric API');
             throw new Error('Error in klaviyo getCampaignReportMultiMetric API');
         }
+    }
+
+    private transformToCampaignDailyRecords(rawData: MetricAggregateResponseData): CampaignDailyRecord[] {
+        const dates = rawData?.attributes?.dates || [];
+        const data = rawData?.attributes?.data || [];
+
+        if (dates.length === 0 || data.length === 0) {
+            return [];
+        }
+
+        const records: CampaignDailyRecord[] = [];
+
+        for (const row of data) {
+            const dimensions = row.dimensions || [];
+            const campaignId = dimensions[0] || 'unknown';
+            const campaignName = dimensions[1] || 'Unknown Campaign';
+            const measurements = row.measurements || {};
+            const countArr = measurements.count || [];
+            const uniqueArr = measurements.unique || [];
+            const sumValueArr = measurements.sum_value || [];
+
+            for (let i = 0; i < dates.length; i++) {
+                const dateVal = dates[i];
+                const dateStr = typeof dateVal === 'string' 
+                    ? dateVal.split('T')[0] 
+                    : dateVal instanceof Date 
+                        ? dateVal.toISOString().split('T')[0]
+                        : String(dateVal).split('T')[0];
+
+                const count = countArr[i] || 0;
+                const unique = uniqueArr[i] || 0;
+                const sumValue = sumValueArr[i] || 0;
+
+                if (count > 0 || unique > 0 || sumValue > 0) {
+                    records.push({
+                        date: dateStr,
+                        campaign_id: campaignId,
+                        campaign_name: campaignName,
+                        count: count,
+                        unique: unique,
+                        sum_value: sumValue
+                    });
+                }
+            }
+        }
+
+        return records.sort((a, b) => {
+            const dateCompare = new Date(a.date).getTime() - new Date(b.date).getTime();
+            if (dateCompare !== 0) return dateCompare;
+            return a.campaign_name.localeCompare(b.campaign_name);
+        });
     }
 
     private transformToDailyAggregates(rawData: MetricAggregateResponseData): DailyMetricRecord[] {
