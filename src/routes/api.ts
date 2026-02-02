@@ -31,5 +31,7 @@ router.post('/fetch-meta-new-ads', testingController.metaNewAds);
 router.post('/test-refresh-token', testingController.testRefreshToken);
 router.post('/klaviyo-test', testingController.klaviyoTest);
 router.post('/fetch-shopify-performance-report', testingController.shopifyPerformanceReport);
+router.post('/klaviyo-campaign-report', testingController.klaviyoCampaignReport);
+router.post('/klaviyo-campaign-report-multi-metric', testingController.klaviyoCampaignReportMultiMetric);
 
 export default router
