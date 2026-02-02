@@ -33,6 +33,7 @@ interface CampaignDailyReport {
 
 interface MetricAggregateResponseData {
     attributes?: {
+        dates?: (string | Date)[];
         data?: Array<{
             dimensions?: string[];
             measurements?: Record<string, number[]>;
@@ -210,6 +211,7 @@ export class klaviyoService{
 
             for (const metric of targetMetrics) {
                 const metricName = metric.attributes?.name || 'unknown';
+                const metricKey = metricName.toLowerCase().replace(/\s+/g, '_');
                 
                 const metricAggregateQuery: MetricAggregateQuery = {
                     data: {
@@ -233,28 +235,48 @@ export class klaviyoService{
                 const rawData = response?.body?.data;
 
                 const responseData = rawData as MetricAggregateResponseData;
-                if (responseData?.attributes?.data) {
-                    for (const row of responseData.attributes.data) {
-                        const dateValues = row.dimensions || [];
-                        const measurements = row.measurements || {};
+                const dates = responseData?.attributes?.dates || [];
+                const data = responseData?.attributes?.data || [];
+
+                for (let i = 0; i < dates.length; i++) {
+                    const dateVal = dates[i];
+                    const dateStr = typeof dateVal === 'string' 
+                        ? dateVal.split('T')[0] 
+                        : dateVal instanceof Date 
+                            ? dateVal.toISOString().split('T')[0]
+                            : String(dateVal).split('T')[0];
+                    
+                    if (!results[dateStr]) {
+                        results[dateStr] = {
+                            date: dateStr,
+                            metrics: {}
+                        };
+                    }
+                    
+                    if (!results[dateStr].metrics[metricKey]) {
+                        results[dateStr].metrics[metricKey] = { count: 0, unique: 0, sum_value: 0 };
+                    }
+                }
+
+                for (const row of data) {
+                    const measurements = row.measurements || {};
+                    const countArr = measurements.count || [];
+                    const uniqueArr = measurements.unique || [];
+                    const sumValueArr = measurements.sum_value || [];
+
+                    for (let i = 0; i < dates.length; i++) {
+                        const dateVal = dates[i];
+                        const dateStr = typeof dateVal === 'string' 
+                            ? dateVal.split('T')[0] 
+                            : dateVal instanceof Date 
+                                ? dateVal.toISOString().split('T')[0]
+                                : String(dateVal).split('T')[0];
                         
-                        const date = dateValues[0] || 'unknown';
-                        
-                        if (!results[date]) {
-                            results[date] = {
-                                date: date,
-                                metrics: {}
-                            };
+                        if (results[dateStr] && results[dateStr].metrics[metricKey]) {
+                            results[dateStr].metrics[metricKey].count += countArr[i] || 0;
+                            results[dateStr].metrics[metricKey].unique += uniqueArr[i] || 0;
+                            results[dateStr].metrics[metricKey].sum_value += sumValueArr[i] || 0;
                         }
-                        
-                        const metricKey = metricName.toLowerCase().replace(/\s+/g, '_');
-                        if (!results[date].metrics[metricKey]) {
-                            results[date].metrics[metricKey] = { count: 0, unique: 0, sum_value: 0 };
-                        }
-                        
-                        results[date].metrics[metricKey].count += measurements.count?.[0] || 0;
-                        results[date].metrics[metricKey].unique += measurements.unique?.[0] || 0;
-                        results[date].metrics[metricKey].sum_value += measurements.sum_value?.[0] || 0;
                     }
                 }
             }
@@ -270,31 +292,54 @@ export class klaviyoService{
         }
     }
 
-    private transformToDailyAggregates(rawData: { attributes?: { data?: Array<{ dimensions?: string[]; measurements?: Record<string, number[]> }> } }): DailyMetricRecord[] {
-        const dailyMap: Record<string, DailyMetricRecord> = {};
+    private transformToDailyAggregates(rawData: MetricAggregateResponseData): DailyMetricRecord[] {
+        const dates = rawData?.attributes?.dates || [];
+        const data = rawData?.attributes?.data || [];
 
-        if (!rawData?.attributes?.data) {
+        if (dates.length === 0) {
             return [];
         }
 
-        for (const row of rawData.attributes.data) {
-            const dateValues = row.dimensions || [];
-            const measurements = row.measurements || {};
+        const dailyMap: Record<string, DailyMetricRecord> = {};
+
+        for (let i = 0; i < dates.length; i++) {
+            const dateVal = dates[i];
+            const dateStr = typeof dateVal === 'string' 
+                ? dateVal.split('T')[0] 
+                : dateVal instanceof Date 
+                    ? dateVal.toISOString().split('T')[0]
+                    : String(dateVal).split('T')[0];
             
-            const date = dateValues[0] || 'unknown';
-            
-            if (!dailyMap[date]) {
-                dailyMap[date] = {
-                    date: date,
+            if (!dailyMap[dateStr]) {
+                dailyMap[dateStr] = {
+                    date: dateStr,
                     count: 0,
                     unique: 0,
                     sum_value: 0
                 };
             }
-            
-            dailyMap[date].count += measurements.count?.[0] || 0;
-            dailyMap[date].unique += measurements.unique?.[0] || 0;
-            dailyMap[date].sum_value += measurements.sum_value?.[0] || 0;
+        }
+
+        for (const row of data) {
+            const measurements = row.measurements || {};
+            const countArr = measurements.count || [];
+            const uniqueArr = measurements.unique || [];
+            const sumValueArr = measurements.sum_value || [];
+
+            for (let i = 0; i < dates.length; i++) {
+                const dateVal = dates[i];
+                const dateStr = typeof dateVal === 'string' 
+                    ? dateVal.split('T')[0] 
+                    : dateVal instanceof Date 
+                        ? dateVal.toISOString().split('T')[0]
+                        : String(dateVal).split('T')[0];
+                
+                if (dailyMap[dateStr]) {
+                    dailyMap[dateStr].count += countArr[i] || 0;
+                    dailyMap[dateStr].unique += uniqueArr[i] || 0;
+                    dailyMap[dateStr].sum_value += sumValueArr[i] || 0;
+                }
+            }
         }
 
         return Object.values(dailyMap).sort((a, b) => 
