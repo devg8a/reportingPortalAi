@@ -200,13 +200,13 @@ export class klaviyoService{
             let targetMetricId = metricId;
             if (!targetMetricId) {
                 const metricsList = await metricsApi.getMetrics();
-                const receivedEmailMetric = metricsList?.body?.data?.find(
-                    (m: { attributes?: { name?: string } }) => m.attributes?.name === 'Received Email'
+                const placedOrderMetric = metricsList?.body?.data?.find(
+                    (m: { attributes?: { name?: string } }) => m.attributes?.name === 'Placed Order'
                 );
-                if (receivedEmailMetric) {
-                    targetMetricId = receivedEmailMetric.id;
+                if (placedOrderMetric) {
+                    targetMetricId = placedOrderMetric.id;
                 } else {
-                    throw new Error('Could not find Received Email metric. Please provide a metricId.');
+                    throw new Error('Could not find Placed Order metric. Please provide a metricId.');
                 }
             }
 
