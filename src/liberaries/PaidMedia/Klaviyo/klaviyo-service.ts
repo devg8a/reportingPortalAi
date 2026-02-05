@@ -120,14 +120,18 @@ interface NormalizedCampaign {
     statistics: Record<string, unknown>;
 }
 
+interface NormalizedFlowDateEntry {
+    date: string;
+    statistics: Record<string, unknown>;
+}
+
 interface NormalizedFlow {
     id: string;
     name: string;
-    date: string;
     type: string;
     status: string;
     archived: boolean;
-    statistics: Record<string, unknown>;
+    data: NormalizedFlowDateEntry[];
 }
 
 interface CampaignReportRequest {
@@ -313,13 +317,13 @@ export class KlaviyoService {
 
     // ─── Campaign List (with pagination) ────────────────────────
 
-    private async fetchCampaignList(): Promise<unknown[]> {
+    private async fetchCampaignListByChannel(channel: 'email' | 'sms'): Promise<unknown[]> {
         const start = this.getFirstOfMonth();
         const end = this.getYesterday();
         const startStr = `${this.formatDate(start)}T00:00:00+00:00`;
         const endStr = `${this.formatDate(end)}T23:59:59+00:00`;
 
-        const filter = `greater-or-equal(updated_at,${startStr}),less-or-equal(updated_at,${endStr}),equals(messages.channel,'email')`;
+        const filter = `greater-or-equal(updated_at,${startStr}),less-or-equal(updated_at,${endStr}),equals(messages.channel,'${channel}')`;
 
         return this.paginateAll(async (cursor) => {
             const api = new CampaignsApi(this.session);
@@ -340,6 +344,24 @@ export class KlaviyoService {
             const nextCursor = this.extractCursor(body);
             return { data, nextCursor };
         });
+    }
+
+    private async fetchCampaignList(): Promise<unknown[]> {
+        const [emailCampaigns, smsCampaigns] = await Promise.all([
+            this.fetchCampaignListByChannel('email'),
+            this.fetchCampaignListByChannel('sms'),
+        ]);
+
+        const seen = new Set<string>();
+        const merged: unknown[] = [];
+        for (const c of [...emailCampaigns, ...smsCampaigns]) {
+            const id = (c as { id?: string })?.id;
+            if (id && !seen.has(id)) {
+                seen.add(id);
+                merged.push(c);
+            }
+        }
+        return merged;
     }
 
     // ─── Campaign Values Report─────────────────────────────────
@@ -367,7 +389,7 @@ export class KlaviyoService {
                                 end: new Date(`${this.formatDate(end)}T23:59:59Z`),
                             },
                             conversionMetricId,
-                            filter: `equals(send_channel,"email")`,
+                            filter: `contains-any(send_channel,["email","sms"])`,
                         },
                     },
                 };
@@ -564,7 +586,7 @@ export class KlaviyoService {
                             },
                             interval: 'daily',
                             conversionMetricId,
-                            filter: `equals(send_channel,"email")`,
+                            filter: `contains-any(send_channel,["email","sms"])`,
                         },
                     },
                 };
@@ -721,7 +743,7 @@ export class KlaviyoService {
             });
         }
 
-        const results: NormalizedFlow[] = [];
+        const flowDataMap = new Map<string, NormalizedFlowDateEntry[]>();
 
         for (const entry of seriesResults) {
             const row = entry as {
@@ -731,9 +753,7 @@ export class KlaviyoService {
 
             const flowId = row.groupings?.flow_id;
             if (!flowId) continue;
-
-            const meta = flowMeta.get(flowId);
-            if (!meta) continue;
+            if (!flowMeta.has(flowId)) continue;
 
             const measurements = row.statistics ?? {};
 
@@ -749,16 +769,27 @@ export class KlaviyoService {
                     }
                 }
 
-                results.push({
-                    id: flowId,
-                    name: meta.name,
+                if (!flowDataMap.has(flowId)) {
+                    flowDataMap.set(flowId, []);
+                }
+                flowDataMap.get(flowId)!.push({
                     date: dateStr,
-                    type: 'flow',
-                    status: meta.status,
-                    archived: meta.archived,
                     statistics: dayStats,
                 });
             }
+        }
+
+        const results: NormalizedFlow[] = [];
+        for (const [flowId, dateEntries] of flowDataMap) {
+            const meta = flowMeta.get(flowId)!;
+            results.push({
+                id: flowId,
+                name: meta.name,
+                type: 'flow',
+                status: meta.status,
+                archived: meta.archived,
+                data: dateEntries,
+            });
         }
 
         return results;
@@ -803,7 +834,7 @@ export class KlaviyoService {
             logger.info(`Klaviyo: Fetched ${seriesReport.results.length} flow series entries across ${seriesReport.dateTimes.length} dates`);
 
             const flows = this.normalizeFlows(rawFlows, seriesReport.dateTimes, seriesReport.results);
-            logger.info(`Klaviyo: Normalized ${flows.length} flow-date records`);
+            logger.info(`Klaviyo: Normalized ${flows.length} flows (grouped by flow_id)`);
             return flows;
         } catch (error) {
             logger.error(error, 'Error in KlaviyoService.getFlowsWithMetrics');
