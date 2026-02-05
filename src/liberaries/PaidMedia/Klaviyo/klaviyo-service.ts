@@ -319,7 +319,7 @@ export class KlaviyoService {
         const startStr = `${this.formatDate(start)}T00:00:00+00:00`;
         const endStr = `${this.formatDate(end)}T23:59:59+00:00`;
 
-        const filter = `greater-or-equal(send_time,${startStr}),less-or-equal(send_time,${endStr}),equals(messages.channel,'email')`;
+        const filter = `greater-or-equal(updated_at,${startStr}),less-or-equal(updated_at,${endStr}),equals(messages.channel,'email')`;
 
         return this.paginateAll(async (cursor) => {
             const api = new CampaignsApi(this.session);
@@ -348,35 +348,64 @@ export class KlaviyoService {
         const start = this.get90DaysAgo();
         const end = this.getYesterday();
 
+        const statsToTry = [...ALL_CAMPAIGN_STATISTICS];
+
         const results: unknown[] = [];
         let pageCursor: string | undefined;
 
-        do {
-            await this.reportingLimiter.acquire();
-            const api = new ReportingApi(this.session);
-            const requestBody: CampaignValuesRequestDTO = {
-                data: {
-                    type: 'campaign-values-report',
-                    attributes: {
-                        statistics: [...ALL_CAMPAIGN_STATISTICS],
-                        timeframe: {
-                            start: new Date(`${this.formatDate(start)}T00:00:00Z`),
-                            end: new Date(`${this.formatDate(end)}T23:59:59Z`),
+        const makeRequest = async (statistics: readonly string[]): Promise<void> => {
+            do {
+                await this.reportingLimiter.acquire();
+                const api = new ReportingApi(this.session);
+                const requestBody: CampaignValuesRequestDTO = {
+                    data: {
+                        type: 'campaign-values-report',
+                        attributes: {
+                            statistics: statistics as typeof ALL_CAMPAIGN_STATISTICS extends readonly (infer U)[] ? U[] : never,
+                            timeframe: {
+                                start: new Date(`${this.formatDate(start)}T00:00:00Z`),
+                                end: new Date(`${this.formatDate(end)}T23:59:59Z`),
+                            },
+                            conversionMetricId,
+                            filter: `equals(send_channel,"email")`,
                         },
-                        conversionMetricId,
-                        filter: `equals(send_channel,"email")`,
                     },
-                },
-            };
+                };
 
-            const resp = await api.queryCampaignValues(requestBody, {
-                pageCursor,
-            });
-            const body = resp.body as unknown as Record<string, unknown>;
-            const data = (body?.data ?? []) as unknown[];
-            results.push(...data);
-            pageCursor = this.extractCursor(body);
-        } while (pageCursor);
+                const resp = await api.queryCampaignValues(requestBody, {
+                    pageCursor,
+                });
+                const body = resp.body as unknown as Record<string, unknown>;
+                const reportData = body?.data as { attributes?: { results?: unknown[] } } | undefined;
+                const reportResults = reportData?.attributes?.results ?? [];
+                results.push(...reportResults);
+                pageCursor = this.extractCursor(body);
+            } while (pageCursor);
+        };
+
+        try {
+            await makeRequest(statsToTry);
+        } catch (err: unknown) {
+            const isConversionMetricError =
+                err &&
+                typeof err === 'object' &&
+                'response' in err &&
+                (err as { response?: { status?: number } }).response?.status === 400;
+
+            if (isConversionMetricError) {
+                logger.warn('Klaviyo: Conversion metric not supported for campaign values, retrying without conversion stats');
+                const CONVERSION_STATS = new Set([
+                    'conversion_rate', 'conversion_uniques', 'conversion_value',
+                    'conversions', 'average_order_value', 'revenue_per_recipient',
+                ]);
+                const basicStats = statsToTry.filter((s) => !CONVERSION_STATS.has(s));
+                results.length = 0;
+                pageCursor = undefined;
+                await makeRequest(basicStats);
+            } else {
+                throw err;
+            }
+        }
 
         return results;
     }
@@ -508,42 +537,79 @@ export class KlaviyoService {
 
     // ─── Flow Series Report─────────────────────────────────────
 
-    private async fetchFlowSeriesReport(conversionMetricId: string): Promise<unknown[]> {
+    private async fetchFlowSeriesReport(
+        conversionMetricId: string
+    ): Promise<{ dateTimes: (string | Date)[]; results: unknown[] }> {
         const start = this.getFirstOfMonth();
         const end = this.getYesterday();
 
-        const results: unknown[] = [];
+        let dateTimes: (string | Date)[] = [];
+        const allResults: unknown[] = [];
         let pageCursor: string | undefined;
 
-        do {
-            await this.reportingLimiter.acquire();
-            const api = new ReportingApi(this.session);
-            const requestBody: FlowSeriesRequestDTO = {
-                data: {
-                    type: 'flow-series-report',
-                    attributes: {
-                        statistics: [...ALL_FLOW_STATISTICS],
-                        timeframe: {
-                            start: new Date(`${this.formatDate(start)}T00:00:00Z`),
-                            end: new Date(`${this.formatDate(end)}T23:59:59Z`),
+        const statsToTry = [...ALL_FLOW_STATISTICS];
+
+        const makeRequest = async (statistics: readonly string[]): Promise<void> => {
+            do {
+                await this.reportingLimiter.acquire();
+                const api = new ReportingApi(this.session);
+                const requestBody: FlowSeriesRequestDTO = {
+                    data: {
+                        type: 'flow-series-report',
+                        attributes: {
+                            statistics: statistics as typeof ALL_FLOW_STATISTICS extends readonly (infer U)[] ? U[] : never,
+                            timeframe: {
+                                start: new Date(`${this.formatDate(start)}T00:00:00Z`),
+                                end: new Date(`${this.formatDate(end)}T23:59:59Z`),
+                            },
+                            interval: 'daily',
+                            conversionMetricId,
+                            filter: `equals(send_channel,"email")`,
                         },
-                        interval: 'daily',
-                        conversionMetricId,
-                        filter: `equals(send_channel,"email")`,
                     },
-                },
-            };
+                };
 
-            const resp = await api.queryFlowSeries(requestBody, {
-                pageCursor,
-            });
-            const body = resp.body as unknown as Record<string, unknown>;
-            const data = (body?.data ?? []) as unknown[];
-            results.push(...data);
-            pageCursor = this.extractCursor(body);
-        } while (pageCursor);
+                const resp = await api.queryFlowSeries(requestBody, {
+                    pageCursor,
+                });
+                const body = resp.body as unknown as Record<string, unknown>;
+                const reportData = body?.data as {
+                    attributes?: { dateTimes?: (string | Date)[]; results?: unknown[] };
+                } | undefined;
+                if (reportData?.attributes?.dateTimes) {
+                    dateTimes = reportData.attributes.dateTimes;
+                }
+                const reportResults = reportData?.attributes?.results ?? [];
+                allResults.push(...reportResults);
+                pageCursor = this.extractCursor(body);
+            } while (pageCursor);
+        };
 
-        return results;
+        try {
+            await makeRequest(statsToTry);
+        } catch (err: unknown) {
+            const isConversionMetricError =
+                err &&
+                typeof err === 'object' &&
+                'response' in err &&
+                (err as { response?: { status?: number } }).response?.status === 400;
+
+            if (isConversionMetricError) {
+                logger.warn('Klaviyo: Conversion metric not supported for flow series, retrying without conversion stats');
+                const CONVERSION_STATS = new Set([
+                    'conversion_rate', 'conversion_uniques', 'conversion_value',
+                    'conversions', 'average_order_value', 'revenue_per_recipient',
+                ]);
+                const basicStats = statsToTry.filter((s) => !CONVERSION_STATS.has(s));
+                allResults.length = 0;
+                pageCursor = undefined;
+                await makeRequest(basicStats);
+            } else {
+                throw err;
+            }
+        }
+
+        return { dateTimes, results: allResults };
     }
 
     // ─── Normalization: Campaigns ───────────────────────────────
@@ -556,19 +622,22 @@ export class KlaviyoService {
         const statsById = new Map<string, Record<string, unknown>>();
         for (const entry of valuesReport) {
             const e = entry as {
-                relationships?: {
-                    campaign?: { data?: { id?: string } };
-                };
-                attributes?: { statistics?: Record<string, unknown> };
+                groupings?: { campaign_id?: string };
+                statistics?: Record<string, unknown>;
             };
-            const campaignId = e.relationships?.campaign?.data?.id;
-            const stats = e.attributes?.statistics;
+            const campaignId = e.groupings?.campaign_id;
+            const stats = e.statistics;
             if (campaignId && stats) {
                 statsById.set(campaignId, stats);
             }
         }
 
-        return rawCampaigns.map((c) => {
+        const startDate = this.formatDate(this.getFirstOfMonth());
+        const endDate = this.formatDate(this.getYesterday());
+
+        const normalized: NormalizedCampaign[] = [];
+
+        for (const c of rawCampaigns) {
             const campaign = c as {
                 id: string;
                 attributes?: {
@@ -587,6 +656,10 @@ export class KlaviyoService {
             const rawSendTime = attrs.send_time ?? '';
             const sendDate = rawSendTime ? rawSendTime.split('T')[0] : '';
 
+            if (sendDate && (sendDate < startDate || sendDate > endDate)) {
+                continue;
+            }
+
             const buildAudienceMap = (
                 entries?: Array<{ id?: string }>
             ): Record<string, { name: string | null }> => {
@@ -601,7 +674,7 @@ export class KlaviyoService {
                 return result;
             };
 
-            return {
+            normalized.push({
                 id: campaign.id,
                 name: attrs.name ?? '',
                 type: 'campaign',
@@ -613,15 +686,18 @@ export class KlaviyoService {
                     excluded: buildAudienceMap(attrs.audiences?.excluded),
                 },
                 statistics: statsById.get(campaign.id) ?? {},
-            };
-        });
+            });
+        }
+
+        return normalized;
     }
 
     // ─── Normalization: Flows ───────────────────────────────────
 
     private normalizeFlows(
         rawFlows: unknown[],
-        seriesReport: unknown[]
+        dateTimes: (string | Date)[],
+        seriesResults: unknown[]
     ): NormalizedFlow[] {
         const flowMeta = new Map<
             string,
@@ -647,50 +723,41 @@ export class KlaviyoService {
 
         const results: NormalizedFlow[] = [];
 
-        for (const entry of seriesReport) {
-            const e = entry as {
-                attributes?: {
-                    results?: Array<{
-                        dimensions?: { flow_id?: string; send_channel?: string };
-                        data?: Record<string, number[]>;
-                    }>;
-                    dateTimes?: string[];
-                };
+        for (const entry of seriesResults) {
+            const row = entry as {
+                groupings?: { flow_id?: string };
+                statistics?: Record<string, number[]>;
             };
 
-            const dateTimes = e.attributes?.dateTimes ?? [];
-            const seriesResults = e.attributes?.results ?? [];
+            const flowId = row.groupings?.flow_id;
+            if (!flowId) continue;
 
-            for (const row of seriesResults) {
-                const flowId = row.dimensions?.flow_id;
-                if (!flowId) continue;
+            const meta = flowMeta.get(flowId);
+            if (!meta) continue;
 
-                const meta = flowMeta.get(flowId);
-                if (!meta) continue;
+            const measurements = row.statistics ?? {};
 
-                const measurements = row.data ?? {};
+            for (let i = 0; i < dateTimes.length; i++) {
+                const dt = dateTimes[i];
+                const isoStr = dt instanceof Date ? dt.toISOString() : String(dt);
+                const dateStr = isoStr.split('T')[0];
 
-                for (let i = 0; i < dateTimes.length; i++) {
-                    const dt = dateTimes[i];
-                    const dateStr = typeof dt === 'string' ? dt.split('T')[0] : String(dt).split('T')[0];
-
-                    const dayStats: Record<string, number> = {};
-                    for (const [key, values] of Object.entries(measurements)) {
-                        if (Array.isArray(values) && i < values.length) {
-                            dayStats[key] = values[i];
-                        }
+                const dayStats: Record<string, number> = {};
+                for (const [key, values] of Object.entries(measurements)) {
+                    if (Array.isArray(values) && i < values.length) {
+                        dayStats[key] = values[i];
                     }
-
-                    results.push({
-                        id: flowId,
-                        name: meta.name,
-                        date: dateStr,
-                        type: 'flow',
-                        status: meta.status,
-                        archived: meta.archived,
-                        statistics: dayStats,
-                    });
                 }
+
+                results.push({
+                    id: flowId,
+                    name: meta.name,
+                    date: dateStr,
+                    type: 'flow',
+                    status: meta.status,
+                    archived: meta.archived,
+                    statistics: dayStats,
+                });
             }
         }
 
@@ -733,9 +800,9 @@ export class KlaviyoService {
 
             logger.info('Klaviyo: Fetching flow series report...');
             const seriesReport = await this.fetchFlowSeriesReport(conversionMetricId);
-            logger.info(`Klaviyo: Fetched ${seriesReport.length} flow series entries`);
+            logger.info(`Klaviyo: Fetched ${seriesReport.results.length} flow series entries across ${seriesReport.dateTimes.length} dates`);
 
-            const flows = this.normalizeFlows(rawFlows, seriesReport);
+            const flows = this.normalizeFlows(rawFlows, seriesReport.dateTimes, seriesReport.results);
             logger.info(`Klaviyo: Normalized ${flows.length} flow-date records`);
             return flows;
         } catch (error) {
@@ -787,7 +854,7 @@ export class KlaviyoService {
             const end = this.getYesterday();
             const startStr = `${this.formatDate(start)}T00:00:00`;
             const endStr = `${this.formatDate(end)}T23:59:59`;
-            const filter = `greater-or-equal(send_time,${startStr}),less-or-equal(send_time,${endStr}),equals(messages.channel,'email')`;
+            const filter = `greater-or-equal(updated_at,${startStr}),less-or-equal(updated_at,${endStr}),equals(messages.channel,'email')`;
             const campaigns = new CampaignsApi(this.session);
             const campaignsList = await campaigns.getCampaigns(filter);
             return campaignsList?.body?.data;
