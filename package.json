@@ -1,0 +1,71 @@
+{
+  "name": "v2reportingportal-react",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "@emotion/react": "11.14.0",
+    "@emotion/styled": "11.14.1",
+    "@internationalized/date": "^3.10.1",
+    "@mui/icons-material": "7.3.6",
+    "@mui/material": "7.3.6",
+    "@reduxjs/toolkit": "2.11.2",
+    "@testing-library/dom": "10.4.1",
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "16.3.1",
+    "@testing-library/user-event": "13.5.0",
+    "apexcharts": "^5.3.6",
+    "axios": "1.13.2",
+    "clean-webpack-plugin": "4.0.0",
+    "formik": "2.4.9",
+    "moment": "^2.30.1",
+    "npm": "11.7.0",
+    "react": "19.2.3",
+    "react-apexcharts": "^1.9.0",
+    "react-aria-components": "^1.14.0",
+    "react-dom": "19.2.3",
+    "react-otp-input": "^3.1.1",
+    "react-redux": "9.2.0",
+    "react-router-dom": "6.28.0",
+    "react-scripts": "5.0.1",
+    "redux": "5.0.1",
+    "web-vitals": "2.1.4",
+    "webpack": "5.104.0",
+    "webpack-cli": "6.0.1",
+    "webpack-dev-server": "5.2.2",
+    "yup": "1.7.1"
+  },
+  "scripts": {
+    "start": "webpack serve --env env=local --open --mode development",
+    "dev": "webpack --env env=dev --mode production",
+    "production": "webpack --env env=production --mode production"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^22.19.6",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "copy-webpack-plugin": "^13.0.1",
+    "tailwind-merge": "^3.4.0",
+    "ts-loader": "^9.5.1",
+    "typescript": "^5.3.3",
+    "url-loader": "^4.1.1"
+  }
+}

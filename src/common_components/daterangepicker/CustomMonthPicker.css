@@ -1,0 +1,187 @@
+.custom-month-picker-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.month-picker-trigger-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  background: #ffffff;
+  cursor: pointer;
+  min-width: 180px;
+  max-width: 250px;
+  transition: all 0.2s ease;
+}
+
+.month-picker-trigger-field:hover {
+  border-color: #bdbdbd;
+  background-color: #fafafa;
+}
+
+.month-picker-trigger-field.active-trigger {
+  border: 1px solid #e91e63 !important;
+  background-color: #fff5f8;
+  box-shadow: 0 0 0 1px rgba(233, 30, 99, 0.1);
+}
+
+.month-picker-trigger-field .calendar-icon {
+  color: #757575;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.month-picker-trigger-field.active-trigger .calendar-icon {
+  color: #e91e63;
+}
+
+.month-picker-trigger-field .month-display-text {
+  flex: 1;
+  font-size: 14px;
+  color: #333;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.month-picker-trigger-field .placeholder-text {
+  color: #999;
+}
+
+.month-picker-trigger-field.active-trigger .placeholder-text {
+  color: #e91e63;
+  opacity: 0.7;
+}
+
+.month-picker-popper {
+  z-index: 1300;
+}
+
+body .month-picker-modal {
+  width: 280px;
+  max-width: 276px;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0px 12px 16px -4px #0A0D1214;
+  background: #ffffff;
+}
+
+.month-picker-content {
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  gap: 0;
+}
+
+.month-picker-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0;
+}
+
+.year-nav-button {
+  padding: 4px;
+  color: #71717A;
+}
+
+.year-nav-button:hover {
+  background-color: #f0f0f0;
+}
+
+.year-nav-button svg {
+  fill: #71717A;
+}
+
+.year-display {
+  font-weight: 400;
+  font-size: 14px !important;
+  letter-spacing: 0px;
+  text-align: center;
+  color: #18181B;
+  font-family: 'Inter';
+}
+
+.months-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
+  row-gap: 4px;
+  padding: 10px 0;
+}
+
+.month-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px 30px;
+  font-size: 14px;
+  color: #18181B;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  font-family: 'Inter';
+  font-weight: 400;
+  background-color: transparent;
+}
+
+.month-item:hover {
+  background-color: #f5f5f5;
+}
+
+.month-item.selected-month {
+  background-color: #FFC8E9;
+  color: #FF008E;
+  font-weight: 500;
+}
+
+
+.all-time-button {
+  padding: 8px 16px;
+  text-transform: none;
+  font-size: 14px;
+  color: #666;
+  border: 1px solid #e0e0e0;
+  background: #ffffff;
+  border-radius: 4px;
+  font-family: 'Inter';
+  font-weight: 400;
+}
+
+.all-time-button:hover {
+  background-color: #f5f5f5;
+  border-color: #bdbdbd;
+}
+
+.d-flex {
+  display: flex;
+}
+.months-grid .month-item.selected-month{
+  background-color: #FF008E;
+  color: #fff;
+}
+.month-picker-actions button{
+  border: 1px solid #D5D7DA;
+  padding: 6px;
+  border-radius: 8px;
+  color: #18181B;
+  font-family: 'Inter';
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: 0px;
+  text-align: center;
+  text-transform: capitalize;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .month-picker-modal {
+    width: 95vw;
+  }
+}
+

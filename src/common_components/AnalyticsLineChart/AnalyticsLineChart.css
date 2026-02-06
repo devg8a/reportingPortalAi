@@ -1,0 +1,229 @@
+/* Analytics Line Chart Styles */
+
+.analytics-line-chart-wrapper {
+  width: 100%;
+  /* padding: 16px; */
+  background: transparent;
+  /* border-radius: 8px; */
+}
+
+/* Custom Tooltip Styles - Side-by-side Comparison */
+.custom-tooltip {
+  background: #ffffff;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  padding: 0;
+  min-width: 400px;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.tooltip-header {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #E5E7EB;
+  background: #F9FAFB;
+  border-radius: 8px 8px 0 0;
+}
+
+.tooltip-close,
+.tooltip-menu {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: #E5E7EB;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  color: #374151;
+  padding: 0;
+  transition: background 0.15s ease;
+}
+
+.tooltip-close:hover,
+.tooltip-menu:hover {
+  background: #D1D5DB;
+}
+
+.tooltip-body-side-by-side,
+.tooltip-body-single {
+  display: flex;
+  padding: 0;
+}
+
+.tooltip-body-single {
+  flex-direction: column;
+  padding: 16px;
+}
+
+.tooltip-column {
+  flex: 1;
+  padding: 16px;
+  border-right: 1px solid #E5E7EB;
+}
+
+.tooltip-column:last-child {
+  border-right: none;
+}
+
+.tooltip-column-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: #111827;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #E5E7EB;
+}
+
+.tooltip-metric-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.tooltip-metric-row:last-child {
+  margin-bottom: 0;
+}
+
+.tooltip-metric-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #374151;
+}
+
+.tooltip-metric-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  text-align: right;
+}
+
+/* ApexCharts Overrides */
+.apexcharts-tooltip {
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+.apexcharts-tooltip.apexcharts-theme-light {
+  border: none !important;
+}
+
+/* Legend Styles */
+.apexcharts-legend {
+  padding: 16px 10px !important;
+}
+
+.apexcharts-legend-series {
+  margin: 0 10px !important;
+}
+
+.apexcharts-legend-marker {
+  margin-right: 6px !important;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .analytics-line-chart-wrapper {
+    padding: 12px;
+  }
+
+  .custom-tooltip {
+    min-width: 180px;
+  }
+
+  .tooltip-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .tooltip-value {
+    margin-left: 0;
+    text-align: left;
+  }
+}
+
+.chart-compare-toggle {
+  position: absolute;
+  bottom: 8px;
+  right: 12px;
+  font-size: 12px;
+  color: #475569;
+}
+
+
+
+
+
+
+
+
+/* Footer row */
+.chart-footer-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: -32px;
+  /* pulls row up to legend level */
+  padding: 0 12px 8px;
+}
+
+/* Apex legend aligned left */
+.analytics-line-chart-wrapper .apexcharts-legend {
+  justify-content: flex-start !important;
+  margin-bottom: 0 !important;
+}
+
+/* Toggle aligned right */
+.chart-compare-toggle {
+  font-size: 12px;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+
+
+/* 🔥 FORCE LEGEND INTO SINGLE LINE */
+.analytics-line-chart-wrapper .apexcharts-legend {
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 16px !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+}
+
+/* 🔥 KILL GROUP SEPARATION */
+.analytics-line-chart-wrapper .apexcharts-legend-group {
+  display: contents !important;
+}
+
+/* 🔥 EACH ITEM INLINE */
+.analytics-line-chart-wrapper .apexcharts-legend-series {
+  display: inline-flex !important;
+  align-items: center !important;
+  margin: 0 !important;
+  padding: 0 6px !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+}
+
+/* 🔥 MARKER + TEXT INLINE */
+.analytics-line-chart-wrapper .apexcharts-legend-marker,
+.analytics-line-chart-wrapper .apexcharts-legend-text {
+  display: inline-block;
+  vertical-align: middle !important;
+}
+
+.apexcharts-legend-series:nth-child(n+5) {
+  display: none !important;
+}
