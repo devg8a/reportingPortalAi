@@ -410,9 +410,9 @@ export const klaviyoTest = async(req,res)=>{
 		const klaviyoLib = new klaviyoService(req.body.accountkey);
 		// const klaviyyo   = await klaviyoLib.getProfiles();
 		// const klaviyyo   = await klaviyoLib.getMetrices();
-		const klaviyyo   = await klaviyoLib.getCampaigns();
+		// const klaviyyo   = await klaviyoLib.getCampaigns();
 		// const klaviyyo   = await klaviyoLib.getFlows();
-		console.log('klaviyyo==>',klaviyyo);
+		const klaviyyo   = await klaviyoLib.fetchAll(req.body.metricId);
 		res.status(200).json({ status_code: 200, success: true, message: 'klaviyo triggered successfully.', data: klaviyyo });
 	}catch(error){
 		console.log('error==>',error);
