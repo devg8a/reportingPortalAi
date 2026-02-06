@@ -666,7 +666,7 @@ export class KlaviyoService {
                     name?: string;
                     status?: string;
                     archived?: boolean;
-                    send_time?: string;
+                    sendTime?: string | Date;
                     audiences?: {
                         included?: Array<{ id?: string }>;
                         excluded?: Array<{ id?: string }>;
@@ -675,7 +675,8 @@ export class KlaviyoService {
             };
 
             const attrs = campaign.attributes ?? {};
-            const rawSendTime = attrs.send_time ?? '';
+            const rawSendTimeVal = attrs.sendTime ?? '';
+            const rawSendTime = rawSendTimeVal instanceof Date ? rawSendTimeVal.toISOString() : String(rawSendTimeVal);
             const sendDate = rawSendTime ? rawSendTime.split('T')[0] : '';
 
             if (sendDate && (sendDate < startDate || sendDate > endDate)) {
