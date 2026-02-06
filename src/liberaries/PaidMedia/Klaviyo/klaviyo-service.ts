@@ -442,18 +442,19 @@ export class KlaviyoService {
                 included?: unknown[];
                 excluded?: unknown[];
             } | undefined;
-            if (audiences?.included) {
-                for (const entry of audiences.included) {
-                    const id = (entry as { id?: string })?.id;
-                    if (id) ids.add(id);
+            const extractIds = (entries?: unknown[]) => {
+                if (!entries) return;
+                for (const entry of entries) {
+                    if (typeof entry === 'string') {
+                        ids.add(entry);
+                    } else if (entry && typeof entry === 'object') {
+                        const id = (entry as { id?: string }).id;
+                        if (id) ids.add(id);
+                    }
                 }
-            }
-            if (audiences?.excluded) {
-                for (const entry of audiences.excluded) {
-                    const id = (entry as { id?: string })?.id;
-                    if (id) ids.add(id);
-                }
-            }
+            };
+            extractIds(audiences?.included);
+            extractIds(audiences?.excluded);
         }
         return ids;
     }
@@ -544,17 +545,38 @@ export class KlaviyoService {
 
     // ─── Flow List (with pagination) ────────────────────────────
 
-    private async fetchFlowList(): Promise<unknown[]> {
-        return this.paginateAll(async (cursor) => {
-            const api = new FlowsApi(this.session);
-            const resp = await api.getFlows({
-                fieldsFlow: ['name', 'status', 'archived', 'trigger_type'],
-                pageCursor: cursor,
+    private async fetchFlowsByIds(flowIds: string[]): Promise<unknown[]> {
+        if (flowIds.length === 0) return [];
+        const results: unknown[] = [];
+        const batchSize = 100;
+        for (let i = 0; i < flowIds.length; i += batchSize) {
+            const batch = flowIds.slice(i, i + batchSize);
+            const idsStr = batch.map((id) => `"${id}"`).join(',');
+            const filter = `any(id,[${idsStr}])`;
+            const batchResults = await this.paginateAll(async (cursor) => {
+                const api = new FlowsApi(this.session);
+                const resp = await api.getFlows({
+                    fieldsFlow: ['name', 'status', 'archived', 'trigger_type'],
+                    filter,
+                    pageCursor: cursor,
+                });
+                const body = resp.body as unknown as Record<string, unknown>;
+                const data = (body?.data ?? []) as unknown[];
+                return { data, nextCursor: this.extractCursor(body) };
             });
-            const body = resp.body as unknown as Record<string, unknown>;
-            const data = (body?.data ?? []) as unknown[];
-            return { data, nextCursor: this.extractCursor(body) };
-        });
+            results.push(...batchResults);
+        }
+        return results;
+    }
+
+    private extractFlowIdsFromSeries(seriesResults: unknown[]): string[] {
+        const ids = new Set<string>();
+        for (const entry of seriesResults) {
+            const row = entry as { groupings?: { flow_id?: string } };
+            const flowId = row.groupings?.flow_id;
+            if (flowId) ids.add(flowId);
+        }
+        return Array.from(ids);
     }
 
     // ─── Flow Series Report─────────────────────────────────────
@@ -668,8 +690,8 @@ export class KlaviyoService {
                     archived?: boolean;
                     sendTime?: string | Date;
                     audiences?: {
-                        included?: Array<{ id?: string }>;
-                        excluded?: Array<{ id?: string }>;
+                        included?: unknown[];
+                        excluded?: unknown[];
                     };
                 };
             };
@@ -684,12 +706,17 @@ export class KlaviyoService {
             }
 
             const buildAudienceMap = (
-                entries?: Array<{ id?: string }>
+                entries?: unknown[]
             ): Record<string, { name: string | null }> => {
                 const result: Record<string, { name: string | null }> = {};
                 if (!entries) return result;
                 for (const entry of entries) {
-                    const id = entry.id;
+                    let id: string | undefined;
+                    if (typeof entry === 'string') {
+                        id = entry;
+                    } else if (entry && typeof entry === 'object') {
+                        id = (entry as { id?: string }).id;
+                    }
                     if (id) {
                         result[id] = { name: audienceNameMap.get(id) ?? null };
                     }
@@ -826,13 +853,16 @@ export class KlaviyoService {
 
     async getFlowsWithMetrics(conversionMetricId: string): Promise<NormalizedFlow[]> {
         try {
-            logger.info('Klaviyo: Fetching flow list...');
-            const rawFlows = await this.fetchFlowList();
-            logger.info(`Klaviyo: Fetched ${rawFlows.length} flows`);
-
             logger.info('Klaviyo: Fetching flow series report...');
             const seriesReport = await this.fetchFlowSeriesReport(conversionMetricId);
             logger.info(`Klaviyo: Fetched ${seriesReport.results.length} flow series entries across ${seriesReport.dateTimes.length} dates`);
+
+            const flowIds = this.extractFlowIdsFromSeries(seriesReport.results);
+            logger.info(`Klaviyo: Found ${flowIds.length} unique flow IDs in series data`);
+
+            logger.info('Klaviyo: Fetching flow metadata for matched flows...');
+            const rawFlows = await this.fetchFlowsByIds(flowIds);
+            logger.info(`Klaviyo: Fetched metadata for ${rawFlows.length} flows`);
 
             const flows = this.normalizeFlows(rawFlows, seriesReport.dateTimes, seriesReport.results);
             logger.info(`Klaviyo: Normalized ${flows.length} flows (grouped by flow_id)`);
