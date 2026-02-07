@@ -2,7 +2,6 @@ import { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import moment from 'moment';
 import { getCentralStorageModel } from '../db/schema/dynamic-central-model';
-import ClientConnections from '../db/models/clientConnections';
 import logger from '../utils/logger';
 
 interface IEmailMarketingPayload {
@@ -46,8 +45,8 @@ const queryCentralStorage = async (
                 client_id: objectId,
                 network,
                 date: {
-                    $gte: qStart.startOf('day').toDate(),
-                    $lte: qEnd.endOf('day').toDate(),
+                    $gte: qStart.clone().startOf('day').toDate(),
+                    $lte: qEnd.clone().endOf('day').toDate(),
                 },
                 ...matchExtra,
             }).lean();
@@ -119,8 +118,8 @@ const computeShopifyRevenue = async (
                         client_id: objectId,
                         network: 'shopify',
                         date: {
-                            $gte: qStart.startOf('day').toDate(),
-                            $lte: qEnd.endOf('day').toDate(),
+                            $gte: qStart.clone().startOf('day').toDate(),
+                            $lte: qEnd.clone().endOf('day').toDate(),
                         },
                     },
                 },
