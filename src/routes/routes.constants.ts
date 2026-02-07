@@ -33,6 +33,7 @@ export interface RoutesConfig {
     readonly notFound: RouteConfig;
     readonly clients: RouteConfig;
     readonly proTeamLeaguePerformance: RouteConfig;
+    readonly emailMarketing: RouteConfig;
 }
 
 export const ROUTES: RoutesConfig = Object.freeze({
@@ -80,6 +81,7 @@ export const ROUTES: RoutesConfig = Object.freeze({
     activeClient: Object.freeze({ name: "active_clients", path: "/active-clients" }),
     clients: Object.freeze({ name: "clients", path: "/clients" }),
     proTeamLeaguePerformance: Object.freeze({ name: "proTeamLeaguePerformance", path: "/pro-team-league-performance" }),
+    emailMarketing: Object.freeze({ name: "emailMarketing", path: "/email-marketing" }),
 
     // Fallback
     notFound: Object.freeze({ name: "notFound", path: "/notfound" }),

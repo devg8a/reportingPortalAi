@@ -31,6 +31,7 @@ import AccountSummaryMain from "../pages/AccountSummary/AccountSummaryMain";
 import ClientList from "../pages/ClientList";
 import NotFound from "../pages/NotFound";
 import ProTeamLeaguePerformance from "../pages/AccountSummary/ProTeamLeaguePerformance";
+import EmailMarketing from "../pages/EmailMarketing";
 
 /**
  * Public-only wrapper:
@@ -155,6 +156,7 @@ const AppRoutes = memo(function AppRoutes(): React.ReactElement {
                 <Route path={ROUTES.profile.path} element={<Profile />} />
 
                 <Route path={ROUTES.proTeamLeaguePerformance.path} element={<ProTeamLeaguePerformance />} />
+                <Route path={ROUTES.emailMarketing.path} element={<EmailMarketing />} />
 
                 {/* NotFound page (for 403 errors) */}
                 <Route path={ROUTES.notFound.path} element={<NotFound />} />

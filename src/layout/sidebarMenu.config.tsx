@@ -2,6 +2,7 @@ import React from "react";
 import { DescriptionOutlined, PersonOutline, Security } from "@mui/icons-material";
 import BarChartIcon from '@mui/icons-material/BarChart';
 import HomeFilledIcon from '@mui/icons-material/HomeFilled';
+import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
 import { ROUTES } from "../routes/routes.constants";
 import SvgIcon, { SvgIconProps } from "@mui/material/SvgIcon";
 
@@ -103,6 +104,12 @@ export const SIDEBAR_MENU: readonly MenuGroupConfig[] = Object.freeze([
                 label: "LTV Report",
                 icon: HomeFilledIcon,
                 to: ROUTES.ltvReport.path,
+            },
+            {
+                key: "emailMarketing",
+                label: "Email Marketing",
+                icon: EmailOutlinedIcon,
+                to: ROUTES.emailMarketing.path,
             },
         ],
     },
