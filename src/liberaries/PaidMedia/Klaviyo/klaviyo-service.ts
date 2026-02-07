@@ -110,6 +110,7 @@ interface NormalizedCampaign {
     id: string;
     name: string;
     type: string;
+    channel: string;
     send_time: string;
     status: string;
     archived: boolean;
@@ -340,7 +341,10 @@ export class KlaviyoService {
                 pageCursor: cursor,
             });
             const body = resp.body as unknown as Record<string, unknown>;
-            const data = (body?.data ?? []) as unknown[];
+            const data = ((body?.data ?? []) as unknown[]).map(item => ({
+                            ...(item as Record<string, unknown>),
+                            channel, // 👈 inject here
+                        }));
             const nextCursor = this.extractCursor(body);
             return { data, nextCursor };
         });
@@ -445,11 +449,11 @@ export class KlaviyoService {
             const extractIds = (entries?: unknown[]) => {
                 if (!entries) return;
                 for (const entry of entries) {
-                    if (typeof entry === 'string') {
+                    if (typeof entry === 'string' && ids.size<20 ) { //limited to 20 API, thats added size
                         ids.add(entry);
                     } else if (entry && typeof entry === 'object') {
                         const id = (entry as { id?: string }).id;
-                        if (id) ids.add(id);
+                        if (id && ids.size <20) ids.add(id);
                     }
                 }
             };
@@ -678,17 +682,17 @@ export class KlaviyoService {
 
         const startDate = this.formatDate(this.getFirstOfMonth());
         const endDate = this.formatDate(this.getYesterday());
-
         const normalized: NormalizedCampaign[] = [];
-
         for (const c of rawCampaigns) {
             const campaign = c as {
                 id: string;
+                channel?: string;
                 attributes?: {
                     name?: string;
                     status?: string;
                     archived?: boolean;
                     sendTime?: string | Date;
+                    sendStrategy?: {datetime?:string | Date};
                     audiences?: {
                         included?: unknown[];
                         excluded?: unknown[];
@@ -697,13 +701,13 @@ export class KlaviyoService {
             };
 
             const attrs = campaign.attributes ?? {};
-            const rawSendTimeVal = attrs.sendTime ?? '';
+            const rawSendTimeVal = attrs.sendTime ?? attrs.sendStrategy?.datetime;
             const rawSendTime = rawSendTimeVal instanceof Date ? rawSendTimeVal.toISOString() : String(rawSendTimeVal);
             const sendDate = rawSendTime ? rawSendTime.split('T')[0] : '';
 
-            if (sendDate && (sendDate < startDate || sendDate > endDate)) {
-                continue;
-            }
+            // if (sendDate && (sendDate < startDate || sendDate > endDate)) {
+            //     continue;
+            // }
 
             const buildAudienceMap = (
                 entries?: unknown[]
@@ -728,6 +732,7 @@ export class KlaviyoService {
                 id: campaign.id,
                 name: attrs.name ?? '',
                 type: 'campaign',
+                channel: campaign.channel ??'',
                 send_time: sendDate,
                 status: attrs.status ?? '',
                 archived: attrs.archived ?? false,
@@ -748,11 +753,24 @@ export class KlaviyoService {
         rawFlows: unknown[],
         dateTimes: (string | Date)[],
         seriesResults: unknown[]
-    ): NormalizedFlow[] {
+    ): {
+        date: string;
+        data: {
+            id: string;
+            name: string;
+            type: 'flow';
+            status: string;
+            archived: boolean;
+            statistics: Record<string, number>;
+        }[];
+    }[] {
+
+        // 1. Build flow metadata
         const flowMeta = new Map<
             string,
-            { name: string; status: string; archived: boolean; triggerType: string }
+            { name: string; status: string; archived: boolean }
         >();
+
         for (const f of rawFlows) {
             const flow = f as {
                 id: string;
@@ -760,19 +778,30 @@ export class KlaviyoService {
                     name?: string;
                     status?: string;
                     archived?: boolean;
-                    trigger_type?: string;
                 };
             };
+
             flowMeta.set(flow.id, {
                 name: flow.attributes?.name ?? '',
                 status: flow.attributes?.status ?? '',
                 archived: flow.attributes?.archived ?? false,
-                triggerType: flow.attributes?.trigger_type ?? '',
             });
         }
 
-        const flowDataMap = new Map<string, NormalizedFlowDateEntry[]>();
+        // 2. Date → flows map
+        const dateMap = new Map<
+            string,
+            {
+                id: string;
+                name: string;
+                type: 'flow';
+                status: string;
+                archived: boolean;
+                statistics: Record<string, number>;
+            }[]
+        >();
 
+        // 3. Process series results
         for (const entry of seriesResults) {
             const row = entry as {
                 groupings?: { flow_id?: string };
@@ -780,48 +809,46 @@ export class KlaviyoService {
             };
 
             const flowId = row.groupings?.flow_id;
-            if (!flowId) continue;
-            if (!flowMeta.has(flowId)) continue;
+            if (!flowId || !flowMeta.has(flowId)) continue;
 
+            const meta = flowMeta.get(flowId)!;
             const measurements = row.statistics ?? {};
 
             for (let i = 0; i < dateTimes.length; i++) {
                 const dt = dateTimes[i];
-                const isoStr = dt instanceof Date ? dt.toISOString() : String(dt);
-                const dateStr = isoStr.split('T')[0];
+                const iso = dt instanceof Date ? dt.toISOString() : String(dt);
+                const date = iso.split('T')[0];
 
-                const dayStats: Record<string, number> = {};
+                const stats: Record<string, number> = {};
                 for (const [key, values] of Object.entries(measurements)) {
-                    if (Array.isArray(values) && i < values.length) {
-                        dayStats[key] = values[i];
+                    if (Array.isArray(values) && values[i] !== undefined) {
+                        stats[key] = values[i];
                     }
                 }
 
-                if (!flowDataMap.has(flowId)) {
-                    flowDataMap.set(flowId, []);
+                if (!dateMap.has(date)) {
+                    dateMap.set(date, []);
                 }
-                flowDataMap.get(flowId)!.push({
-                    date: dateStr,
-                    statistics: dayStats,
+
+                dateMap.get(date)!.push({
+                    id: flowId,
+                    name: meta.name,
+                    type: 'flow',
+                    status: meta.status,
+                    archived: meta.archived,
+                    statistics: stats,
                 });
             }
         }
 
-        const results: NormalizedFlow[] = [];
-        for (const [flowId, dateEntries] of flowDataMap) {
-            const meta = flowMeta.get(flowId)!;
-            results.push({
-                id: flowId,
-                name: meta.name,
-                type: 'flow',
-                status: meta.status,
-                archived: meta.archived,
-                data: dateEntries,
-            });
-        }
-
-        return results;
+        // 4. Convert map → array
+        return Array.from(dateMap.entries()).map(([date, data]) => ({
+            date,
+            data,
+        }));
     }
+
+
 
     // ═══════════════════════════════════════════════════════════
     // PUBLIC API — New methods (campaigns + flows + audience)
@@ -873,13 +900,13 @@ export class KlaviyoService {
         }
     }
 
-    async fetchAll(conversionMetricId: string): Promise<{
+    async fetchKlaviyoRecords(requestData): Promise<{
         campaigns: NormalizedCampaign[];
         flows: NormalizedFlow[];
     }> {
         const [campaigns, flows] = await Promise.all([
-            this.getCampaignsWithMetrics(conversionMetricId),
-            this.getFlowsWithMetrics(conversionMetricId),
+            this.getCampaignsWithMetrics(requestData?.conversionMetricId),
+            this.getFlowsWithMetrics(requestData?.conversionMetricId),
         ]);
         return { campaigns, flows };
     }

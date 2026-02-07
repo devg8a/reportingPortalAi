@@ -34,5 +34,6 @@ router.post('/fetch-shopify-performance-report', testingController.shopifyPerfor
 router.post('/klaviyo-campaign-report', testingController.klaviyoCampaignReport);
 router.post('/klaviyo-campaign-report-multi-metric', testingController.klaviyoCampaignReportMultiMetric);
 router.post('/klaviyo-campaign-daily-report', testingController.klaviyoCampaignDailyReport);
+router.post('/klaviyo-storage', testingController.klaviyoStorage);
 
 export default router

@@ -17,6 +17,7 @@ import logger from '../utils/logger';
 import clientDetails from "../db/models/clientDetails";
 import { SheetLib } from "../liberaries/GoogleSheet/sheetLib";
 import { klaviyoService } from "../liberaries/PaidMedia/Klaviyo/klaviyo-service";
+import captureToCentralStorage from "../liberaries/central-storage-service";
 
 export const affiliateNetworkTestingApi = async (req, res) => {
 	try {
@@ -407,12 +408,13 @@ export const testRefreshToken = async (req, res) => {
 
 export const klaviyoTest = async(req,res)=>{
 	try{
+		
 		const klaviyoLib = new klaviyoService(req.body.accountkey);
 		// const klaviyyo   = await klaviyoLib.getProfiles();
 		// const klaviyyo   = await klaviyoLib.getMetrices();
 		// const klaviyyo   = await klaviyoLib.getCampaigns();
 		// const klaviyyo   = await klaviyoLib.getFlows();
-		const klaviyyo   = await klaviyoLib.fetchAll(req.body.metricId);
+		const klaviyyo   = await klaviyoLib.fetchKlaviyoRecords(req.body);
 		res.status(200).json({ status_code: 200, success: true, message: 'klaviyo triggered successfully.', data: klaviyyo });
 	}catch(error){
 		console.log('error==>',error);
@@ -554,3 +556,45 @@ export const klaviyoCampaignDailyReport = async(req, res) => {
 	}
 }
 
+export const klaviyoStorage = async (req,res)=>{
+	// const campaginDataList = req.body.campaigns;
+	const campaginDataList = req.body.flows;
+	const klaviyyo: Record<string, any[]> = {};
+	for (const campaignData of campaginDataList) {
+		const date = campaignData.date;
+
+		if (!klaviyyo[date]) {
+			klaviyyo[date] = [];
+		}
+
+		for (const campaign of campaignData.data) {
+			klaviyyo[date].push(campaign);
+		}
+	}
+	console.log("klaviyyo==>",klaviyyo);
+		// const klaviyyo = campaginDataList.reduce(
+		// 	(campaign: Record<string, any[]>, campaignData: any) => {
+		// 		const date = campaignData.send_time;
+		// 		if (!date) return campaign;
+
+		// 		if (!campaign[date]) {
+		// 		campaign[date] = [];
+		// 		}
+
+		// 		campaign[date].push(campaignData);
+		// 		return campaign;
+		// 	},
+		// 	{} // important initial value
+		// );
+		await captureToCentralStorage(klaviyyo,"6979ee13c7c7b575bab41b52","6986eeb9847094bebdd35afc","klaviyo");
+		res.status(200).json({ 
+			status_code: 200, 
+			success: true, 
+			message: 'Klaviyo campaign report stored successfully.', 
+			data: klaviyyo 
+		});
+}
+
+export const emailMarketing = async(req,res) =>{
+	
+}
