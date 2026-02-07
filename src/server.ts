@@ -31,6 +31,7 @@ import { cronSyncAllNetworkAccounts } from './controllers/networkAccountControll
 import networkAccountRoutes from './routes/networkAccountRoutes';
 
 import utilityRoutes from './routes/utilityRout';
+import emailMarketingRoutes from './routes/emailMarketingRoutes';
 import connectDB from './db/connection';
 import { runDailyRefresh } from './schedulers/dailyscheduler_chrone';
 import { runHourlySummaryOptimized } from './services/accountSummaryService';
@@ -68,6 +69,7 @@ app.use('/api', accountSummaryRoutes);
 app.use('/api', networkAccountRoutes);
 
 app.use('/api/utility', utilityRoutes);
+app.use('/api/email-marketing', emailMarketingRoutes);
 
 /**Health check route**/
 app.get('/health', (req, res) => {
