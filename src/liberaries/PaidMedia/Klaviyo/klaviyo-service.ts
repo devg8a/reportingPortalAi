@@ -467,7 +467,7 @@ export class KlaviyoService {
         if (ids.length === 0) return new Map();
         const nameMap = new Map<string, string>();
 
-        const batchSize = 100;
+        const batchSize = 20;
         for (let i = 0; i < ids.length; i += batchSize) {
             const batch = ids.slice(i, i + batchSize);
             const idsStr = batch.map((id) => `"${id}"`).join(',');
@@ -500,7 +500,7 @@ export class KlaviyoService {
         if (ids.length === 0) return new Map();
         const nameMap = new Map<string, string>();
 
-        const batchSize = 100;
+        const batchSize = 20;
         for (let i = 0; i < ids.length; i += batchSize) {
             const batch = ids.slice(i, i + batchSize);
             const idsStr = batch.map((id) => `"${id}"`).join(',');
@@ -552,7 +552,7 @@ export class KlaviyoService {
     private async fetchFlowsByIds(flowIds: string[]): Promise<unknown[]> {
         if (flowIds.length === 0) return [];
         const results: unknown[] = [];
-        const batchSize = 100;
+        const batchSize = 20;
         for (let i = 0; i < flowIds.length; i += batchSize) {
             const batch = flowIds.slice(i, i + batchSize);
             const idsStr = batch.map((id) => `"${id}"`).join(',');
