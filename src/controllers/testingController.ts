@@ -594,7 +594,3 @@ export const klaviyoStorage = async (req,res)=>{
 			data: klaviyyo 
 		});
 }
-
-export const emailMarketing = async(req,res) =>{
-	
-}

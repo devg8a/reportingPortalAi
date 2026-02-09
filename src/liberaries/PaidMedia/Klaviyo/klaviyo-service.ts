@@ -449,11 +449,11 @@ export class KlaviyoService {
             const extractIds = (entries?: unknown[]) => {
                 if (!entries) return;
                 for (const entry of entries) {
-                    if (typeof entry === 'string' && ids.size<20 ) { //limited to 20 API, thats added size
+                    if (typeof entry === 'string') { 
                         ids.add(entry);
                     } else if (entry && typeof entry === 'object') {
                         const id = (entry as { id?: string }).id;
-                        if (id && ids.size <20) ids.add(id);
+                        if (id) ids.add(id);
                     }
                 }
             };
