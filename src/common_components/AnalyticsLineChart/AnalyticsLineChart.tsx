@@ -143,6 +143,7 @@ const AnalyticsLineChart = ({
   onCompareToggle,
 }: AnalyticsLineChartProps) => {
   const [showCompare, setShowCompare] = useState(false);
+  const [hiddenMetrics, setHiddenMetrics] = useState<Set<string>>(new Set());
 
 
   const hasComparison =
@@ -365,6 +366,19 @@ const AnalyticsLineChart = ({
     };
   }, [series, comparison, displayLength, isCompareActive]);
 
+  const { visibleSeries, visibleMetaMap } = useMemo(() => {
+    const vs: typeof apexSeries = [];
+    const vm: typeof seriesMetaMap = [];
+    apexSeries.forEach((s, i) => {
+      const meta = seriesMetaMap[i];
+      if (meta && !hiddenMetrics.has(meta.name)) {
+        vs.push(s);
+        vm.push(meta);
+      }
+    });
+    return { visibleSeries: vs, visibleMetaMap: vm };
+  }, [apexSeries, seriesMetaMap, hiddenMetrics]);
+
   /* ---------------- CHART OPTIONS ---------------- */
   const chartOptions: ApexOptions = useMemo(
     () => ({
@@ -377,7 +391,7 @@ const AnalyticsLineChart = ({
       stroke: {
         curve: "smooth",
         width: 2.5,
-        dashArray: apexSeries.map(s => (s.name === "" ? 6 : 0)),
+        dashArray: visibleSeries.map(s => (s.name === "" ? 6 : 0)),
       },
 
       markers: { size: 0 },
@@ -435,9 +449,7 @@ const AnalyticsLineChart = ({
       ],
 
       legend: {
-        show: showLegend,
-        position: "bottom",
-        horizontalAlign: "left",
+        show: false,
       },
 
 
@@ -454,7 +466,7 @@ const AnalyticsLineChart = ({
           const currentMetrics: { name: string; value: number; color: string }[] = [];
           const previousMetrics: { name: string; value: number; color: string }[] = [];
 
-          seriesMetaMap.forEach((meta, idx) => {
+          visibleMetaMap.forEach((meta, idx) => {
             const v = seriesData[idx]?.[dataPointIndex];
             if (typeof v !== "number") return;
 
@@ -558,8 +570,8 @@ const AnalyticsLineChart = ({
       },
     }),
     [
-      apexSeries,
-      seriesMetaMap,
+      visibleSeries,
+      visibleMetaMap,
       xLabels,
       dataType,
       displayLength,
@@ -575,13 +587,58 @@ const AnalyticsLineChart = ({
     <div className="analytics-line-chart-wrapper" style={{ position: "relative" }}>
       <Chart
         // ✅ important: forces proper shrink/expand when toggling compare
-        key={isCompareActive ? "compare-on" : "compare-off"}
+        key={`${isCompareActive ? "compare-on" : "compare-off"}-${[...hiddenMetrics].sort().join()}`}
         options={chartOptions}
-        series={apexSeries as any}
+        series={visibleSeries as any}
         type="line"
         height={height}
         width={width}
       />
+
+      {showLegend && (
+        <div style={{ display: "flex", gap: "16px", padding: "8px 0 4px 10px", flexWrap: "wrap" }}>
+          {seriesMetaMap
+            .filter(m => !m.isComparison)
+            .filter((m, i, arr) => arr.findIndex(x => x.name === m.name) === i)
+            .map(m => {
+              const isHidden = hiddenMetrics.has(m.name);
+              return (
+                <div
+                  key={m.name}
+                  onClick={() => {
+                    setHiddenMetrics(prev => {
+                      const next = new Set(prev);
+                      if (next.has(m.name)) next.delete(m.name);
+                      else next.add(m.name);
+                      return next;
+                    });
+                  }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    cursor: "pointer",
+                    opacity: isHidden ? 0.4 : 1,
+                    fontSize: "12px",
+                    color: "#374151",
+                    userSelect: "none",
+                  }}
+                >
+                  <span style={{
+                    width: "10px",
+                    height: "10px",
+                    borderRadius: "50%",
+                    backgroundColor: isHidden ? "#d1d5db" : m.color,
+                    display: "inline-block",
+                  }} />
+                  <span style={{ textDecoration: isHidden ? "line-through" : "none" }}>
+                    {m.name}
+                  </span>
+                </div>
+              );
+            })}
+        </div>
+      )}
 
       <div className="chart-footer-row">
         <div id="chart-legend-placeholder" />
