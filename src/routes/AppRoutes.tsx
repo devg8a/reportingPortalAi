@@ -32,6 +32,7 @@ import ClientList from "../pages/ClientList";
 import NotFound from "../pages/NotFound";
 import ProTeamLeaguePerformance from "../pages/AccountSummary/ProTeamLeaguePerformance";
 import EmailMarketing from "../pages/EmailMarketing";
+import DivergenceReport from "../pages/DivergenceReport";
 
 /**
  * Public-only wrapper:
@@ -157,6 +158,7 @@ const AppRoutes = memo(function AppRoutes(): React.ReactElement {
 
                 <Route path={ROUTES.proTeamLeaguePerformance.path} element={<ProTeamLeaguePerformance />} />
                 <Route path={ROUTES.emailMarketing.path} element={<EmailMarketing />} />
+                <Route path={ROUTES.divergenceReport.path} element={<DivergenceReport />} />
 
                 {/* NotFound page (for 403 errors) */}
                 <Route path={ROUTES.notFound.path} element={<NotFound />} />
