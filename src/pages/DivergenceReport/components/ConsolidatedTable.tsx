@@ -1,31 +1,58 @@
 import React from "react";
-import {
-    Box,
-    Typography,
-    Table,
-    TableBody,
-    TableCell,
-    TableContainer,
-    TableHead,
-    TableRow,
-} from "@mui/material";
-import { NetworkMetricRow } from "../../../types/divergenceReport.types";
-import { formatCurrency, formatNumber, formatPercent, formatDecimal } from "./NetworkTable";
+import { Box, Typography } from "@mui/material";
+import TrendingUpIcon from "@mui/icons-material/TrendingUp";
+import TrendingDownIcon from "@mui/icons-material/TrendingDown";
+import CommonTable from "../../../common_components/CommonTable";
+import { TableColumn } from "../../../common_components/tableTypes";
+import { DummyRow } from "../dummyData";
 
 interface ConsolidatedTableProps {
-    rows: NetworkMetricRow[];
-    summary: NetworkMetricRow;
+    rows: DummyRow[];
+    summaryRow: DummyRow;
+    columns: TableColumn[];
 }
 
-const ChangeIndicator: React.FC<{ value?: number }> = ({ value }) => {
-    if (value === undefined || value === null || isNaN(value)) return null;
+const fmt = (v: number, type: string): string => {
+    if (type === "currency")
+        return `$ ${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (type === "percent") return `${v.toFixed(2)} %`;
+    if (type === "decimal") return v.toFixed(2);
+    return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+};
 
-    const isPositive = value > 0;
-    const isNeutral = value === 0;
-    const color = isNeutral ? "#6B7280" : isPositive ? "#10B981" : "#EF4444";
-    const bgColor = isNeutral ? "#F3F4F6" : isPositive ? "#ECFDF5" : "#FEF2F2";
-    const arrow = isPositive ? "\u2191" : isNeutral ? "" : "\u2193";
+const METRIC_FORMAT: Record<string, string> = {
+    orders: "number",
+    gross_sales: "currency",
+    discount: "currency",
+    revenue: "currency",
+    sessions: "number",
+    conv_rate: "percent",
+    aov: "currency",
+    discount_pct: "percent",
+    spend: "currency",
+    clicks: "number",
+    cpc: "currency",
+    impressions: "number",
+    ctr: "percent",
+    roas: "decimal",
+    delivered: "number",
+    open_rate: "percent",
+    click_rate: "percent",
+    unsubscribes: "number",
+    recipients: "number",
+    conversion_value: "currency",
+    google_cost: "currency",
+    meta_cost: "currency",
+    total_cost: "currency",
+};
 
+const pctChange = (cur: number, prev: number): number => {
+    if (prev === 0) return cur > 0 ? 100 : 0;
+    return Math.round(((cur - prev) / Math.abs(prev)) * 100);
+};
+
+const ChangeBadge: React.FC<{ value: number }> = ({ value }) => {
+    const isPositive = value >= 0;
     return (
         <Box
             component="span"
@@ -35,47 +62,87 @@ const ChangeIndicator: React.FC<{ value?: number }> = ({ value }) => {
                 gap: "2px",
                 fontSize: "clamp(8px, 0.55vw, 10px)",
                 fontWeight: 600,
-                color,
-                bgcolor: bgColor,
-                borderRadius: "4px",
-                px: "clamp(2px, 0.2vw, 4px)",
+                color: isPositive ? "#16a34a" : "#dc2626",
+                bgcolor: isPositive ? "#dcfce7" : "#fee2e2",
+                borderRadius: "9999px",
+                px: "clamp(3px, 0.25vw, 6px)",
                 py: "1px",
-                ml: "clamp(2px, 0.15vw, 3px)",
                 whiteSpace: "nowrap",
             }}
         >
-            {arrow}{Math.abs(value).toFixed(1)}%
+            {Math.abs(value)}%
+            {isPositive ? (
+                <TrendingUpIcon sx={{ fontSize: 10 }} />
+            ) : (
+                <TrendingDownIcon sx={{ fontSize: 10 }} />
+            )}
         </Box>
     );
 };
 
-const COLUMNS = [
-    { key: "period", label: "Month", format: undefined },
-    { key: "orders", label: "Orders", format: formatNumber },
-    { key: "gross_sales", label: "Gross Sales", format: formatCurrency },
-    { key: "discount", label: "Discount", format: formatCurrency },
-    { key: "revenue", label: "Revenue", format: formatCurrency },
-    { key: "sessions", label: "Sessions", format: formatNumber },
-    { key: "conv_rate", label: "Conv. Rate (%)", format: formatPercent },
-    { key: "aov", label: "AOV", format: formatCurrency },
-    { key: "discount_pct", label: "Discount (%)", format: formatPercent },
-    { key: "google_cost", label: "Google Cost", format: formatCurrency },
-    { key: "meta_cost", label: "Meta Cost", format: formatCurrency },
-    { key: "total_cost", label: "Total Cost", format: formatCurrency },
-    { key: "meta_pct", label: "Meta (%)", format: formatPercent },
-    { key: "cost_per_session", label: "Cost per session", format: formatCurrency },
-    { key: "roas", label: "ROAS", format: formatDecimal },
-];
+const ConsolidatedTable: React.FC<ConsolidatedTableProps> = ({ rows, summaryRow, columns }) => {
+    const renderCell = (row: DummyRow, column: TableColumn) => {
+        const colId = column.id;
 
-const getCellValue = (row: NetworkMetricRow, key: string): number => {
-    return (row as unknown as Record<string, number>)[key] ?? 0;
-};
+        if (colId === "period") {
+            return (
+                <Typography sx={{ fontSize: "clamp(10px, 0.7vw, 12px)", fontWeight: 500, color: "#374151" }}>
+                    {row.period}
+                </Typography>
+            );
+        }
 
-const getChangeValue = (row: NetworkMetricRow, key: string): number | undefined => {
-    return (row as unknown as Record<string, number | undefined>)[`${key}_change`];
-};
+        const curVal = row[colId] as number;
+        const prevVal = row[`${colId}_prev`] as number;
+        const change = pctChange(curVal, prevVal);
+        const formatType = METRIC_FORMAT[colId] || "number";
 
-const ConsolidatedTable: React.FC<ConsolidatedTableProps> = ({ rows, summary }) => {
+        return (
+            <Box sx={{ display: "flex", flexDirection: "column", gap: "1px" }}>
+                <Box sx={{ display: "flex", alignItems: "center", gap: "clamp(3px, 0.2vw, 5px)" }}>
+                    <ChangeBadge value={change} />
+                    <Typography component="span" sx={{ fontSize: "clamp(10px, 0.7vw, 12px)", fontWeight: 600, color: "#111827" }}>
+                        {fmt(curVal, formatType)}
+                    </Typography>
+                </Box>
+                <Typography sx={{ fontSize: "clamp(8px, 0.55vw, 10px)", color: "#9CA3AF", lineHeight: 1.2 }}>
+                    {fmt(prevVal, formatType)}
+                </Typography>
+            </Box>
+        );
+    };
+
+    const renderSummaryRow = (_rows: DummyRow[], column: TableColumn) => {
+        const colId = column.id;
+
+        if (colId === "period") {
+            return (
+                <Typography sx={{ fontSize: "clamp(10px, 0.7vw, 12px)", fontWeight: 700, color: "#EC4899" }}>
+                    Total Summary
+                </Typography>
+            );
+        }
+
+        const curVal = summaryRow[colId] as number;
+        const prevVal = summaryRow[`${colId}_prev`] as number;
+        const change = pctChange(curVal, prevVal);
+        const formatType = METRIC_FORMAT[colId] || "number";
+
+        return (
+            <Box sx={{ display: "flex", flexDirection: "column", gap: "1px" }}>
+                <Box sx={{ display: "flex", alignItems: "center", gap: "clamp(3px, 0.2vw, 5px)" }}>
+                    <ChangeBadge value={change} />
+                    <Typography component="span" sx={{ fontSize: "clamp(10px, 0.7vw, 12px)", fontWeight: 700, color: "#111827" }}>
+                        {fmt(curVal, formatType)}
+                    </Typography>
+                </Box>
+                <Typography sx={{ fontSize: "clamp(8px, 0.55vw, 10px)", color: "#9CA3AF", lineHeight: 1.2 }}>
+                    {fmt(prevVal, formatType)}
+                </Typography>
+            </Box>
+        );
+    };
+
     return (
         <Box
             sx={{
@@ -85,128 +152,17 @@ const ConsolidatedTable: React.FC<ConsolidatedTableProps> = ({ rows, summary }) 
                 overflow: "hidden",
             }}
         >
-            <TableContainer sx={{ overflowX: "auto" }}>
-                <Table size="small" sx={{ minWidth: 1200 }}>
-                    <TableHead>
-                        <TableRow
-                            sx={{
-                                bgcolor: "#F9FAFB",
-                                "& th": {
-                                    fontSize: "clamp(9px, 0.65vw, 11px)",
-                                    fontWeight: 600,
-                                    color: "#6B7280",
-                                    textTransform: "uppercase",
-                                    letterSpacing: "0.5px",
-                                    py: "clamp(6px, 0.5vw, 10px)",
-                                    px: "clamp(6px, 0.5vw, 10px)",
-                                    borderBottom: "1px solid #E5E7EB",
-                                    whiteSpace: "nowrap",
-                                },
-                            }}
-                        >
-                            {COLUMNS.map((col) => (
-                                <TableCell key={col.key}>{col.label}</TableCell>
-                            ))}
-                        </TableRow>
-                    </TableHead>
-                    <TableBody>
-                        {rows.map((row, idx) => (
-                            <TableRow
-                                key={idx}
-                                sx={{
-                                    "&:hover": { bgcolor: "#F9FAFB" },
-                                    "& td": {
-                                        fontSize: "clamp(10px, 0.7vw, 12px)",
-                                        fontWeight: 500,
-                                        color: "#111827",
-                                        py: "clamp(6px, 0.5vw, 10px)",
-                                        px: "clamp(6px, 0.5vw, 10px)",
-                                        borderBottom: "1px solid #F3F4F6",
-                                        whiteSpace: "nowrap",
-                                    },
-                                }}
-                            >
-                                {COLUMNS.map((col) => (
-                                    <TableCell key={col.key}>
-                                        {col.key === "period" ? (
-                                            <Typography
-                                                sx={{
-                                                    fontSize: "clamp(10px, 0.7vw, 12px)",
-                                                    fontWeight: 500,
-                                                    color: "#374151",
-                                                }}
-                                            >
-                                                {row.period}
-                                            </Typography>
-                                        ) : (
-                                            <Box sx={{ display: "inline-flex", alignItems: "center" }}>
-                                                <Typography
-                                                    component="span"
-                                                    sx={{
-                                                        fontSize: "clamp(10px, 0.7vw, 12px)",
-                                                        fontWeight: 500,
-                                                    }}
-                                                >
-                                                    {col.format
-                                                        ? col.format(getCellValue(row, col.key))
-                                                        : formatNumber(getCellValue(row, col.key))}
-                                                </Typography>
-                                                <ChangeIndicator value={getChangeValue(row, col.key)} />
-                                            </Box>
-                                        )}
-                                    </TableCell>
-                                ))}
-                            </TableRow>
-                        ))}
-
-                        <TableRow
-                            sx={{
-                                bgcolor: "#FDF2F8",
-                                "& td": {
-                                    fontSize: "clamp(10px, 0.7vw, 12px)",
-                                    fontWeight: 700,
-                                    color: "#111827",
-                                    py: "clamp(8px, 0.6vw, 12px)",
-                                    px: "clamp(6px, 0.5vw, 10px)",
-                                    borderBottom: "none",
-                                    whiteSpace: "nowrap",
-                                },
-                            }}
-                        >
-                            {COLUMNS.map((col) => (
-                                <TableCell key={col.key}>
-                                    {col.key === "period" ? (
-                                        <Typography
-                                            sx={{
-                                                fontSize: "clamp(10px, 0.7vw, 12px)",
-                                                fontWeight: 700,
-                                                color: "#EC4899",
-                                            }}
-                                        >
-                                            Total Summary
-                                        </Typography>
-                                    ) : (
-                                        <Box sx={{ display: "inline-flex", alignItems: "center" }}>
-                                            <Typography
-                                                component="span"
-                                                sx={{
-                                                    fontSize: "clamp(10px, 0.7vw, 12px)",
-                                                    fontWeight: 700,
-                                                }}
-                                            >
-                                                {col.format
-                                                    ? col.format(getCellValue(summary, col.key))
-                                                    : formatNumber(getCellValue(summary, col.key))}
-                                            </Typography>
-                                            <ChangeIndicator value={getChangeValue(summary, col.key)} />
-                                        </Box>
-                                    )}
-                                </TableCell>
-                            ))}
-                        </TableRow>
-                    </TableBody>
-                </Table>
-            </TableContainer>
+            <CommonTable
+                columns={columns}
+                rows={rows}
+                renderCell={renderCell}
+                enableSummaryRow={true}
+                renderSummaryRow={renderSummaryRow}
+                summaryRowPosition="bottom"
+                isLoading={false}
+                isFirstLoad={false}
+                emptyMessage="No data available"
+            />
         </Box>
     );
 };

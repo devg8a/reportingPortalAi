@@ -1,56 +1,63 @@
 import React, { useState } from "react";
-import {
-    Box,
-    Typography,
-    Table,
-    TableBody,
-    TableCell,
-    TableContainer,
-    TableHead,
-    TableRow,
-    IconButton,
-    Collapse,
-} from "@mui/material";
+import { Box, Typography, IconButton, Collapse } from "@mui/material";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
-import { NetworkMetricRow } from "../../../types/divergenceReport.types";
-
-interface ColumnDef {
-    key: string;
-    label: string;
-    format?: (value: number) => string;
-    width?: string;
-}
+import TrendingUpIcon from "@mui/icons-material/TrendingUp";
+import TrendingDownIcon from "@mui/icons-material/TrendingDown";
+import CommonTable from "../../../common_components/CommonTable";
+import { TableColumn } from "../../../common_components/tableTypes";
+import { DummyRow } from "../dummyData";
 
 interface NetworkTableProps {
     title: string;
     icon?: string;
-    rows: NetworkMetricRow[];
-    summary: NetworkMetricRow;
-    columns: ColumnDef[];
+    rows: DummyRow[];
+    summaryRow: DummyRow;
+    columns: TableColumn[];
+    metricKeys: string[];
 }
 
-const formatCurrency = (v: number): string =>
-    `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmt = (v: number, type: string): string => {
+    if (type === "currency")
+        return `$ ${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (type === "percent") return `${v.toFixed(2)} %`;
+    if (type === "decimal") return v.toFixed(2);
+    return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+};
 
-const formatNumber = (v: number): string =>
-    v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+const METRIC_FORMAT: Record<string, string> = {
+    orders: "number",
+    gross_sales: "currency",
+    discount: "currency",
+    revenue: "currency",
+    sessions: "number",
+    conv_rate: "percent",
+    aov: "currency",
+    discount_pct: "percent",
+    spend: "currency",
+    clicks: "number",
+    cpc: "currency",
+    impressions: "number",
+    ctr: "percent",
+    roas: "decimal",
+    delivered: "number",
+    open_rate: "percent",
+    click_rate: "percent",
+    unsubscribes: "number",
+    recipients: "number",
+    conversion_value: "currency",
+    google_cost: "currency",
+    meta_cost: "currency",
+    total_cost: "currency",
+};
 
-const formatPercent = (v: number): string =>
-    `${v.toFixed(2)}%`;
+const pctChange = (cur: number, prev: number): number => {
+    if (prev === 0) return cur > 0 ? 100 : 0;
+    return Math.round(((cur - prev) / Math.abs(prev)) * 100);
+};
 
-const formatDecimal = (v: number): string =>
-    v.toFixed(2);
-
-const ChangeIndicator: React.FC<{ value?: number }> = ({ value }) => {
-    if (value === undefined || value === null || isNaN(value)) return null;
-
-    const isPositive = value > 0;
-    const isNeutral = value === 0;
-    const color = isNeutral ? "#6B7280" : isPositive ? "#10B981" : "#EF4444";
-    const bgColor = isNeutral ? "#F3F4F6" : isPositive ? "#ECFDF5" : "#FEF2F2";
-    const arrow = isPositive ? "\u2191" : isNeutral ? "" : "\u2193";
-
+const ChangeBadge: React.FC<{ value: number }> = ({ value }) => {
+    const isPositive = value >= 0;
     return (
         <Box
             component="span"
@@ -60,36 +67,94 @@ const ChangeIndicator: React.FC<{ value?: number }> = ({ value }) => {
                 gap: "2px",
                 fontSize: "clamp(9px, 0.6vw, 11px)",
                 fontWeight: 600,
-                color,
-                bgcolor: bgColor,
-                borderRadius: "4px",
-                px: "clamp(3px, 0.3vw, 6px)",
+                color: isPositive ? "#16a34a" : "#dc2626",
+                bgcolor: isPositive ? "#dcfce7" : "#fee2e2",
+                borderRadius: "9999px",
+                px: "clamp(4px, 0.3vw, 8px)",
                 py: "1px",
-                ml: "clamp(2px, 0.2vw, 4px)",
                 whiteSpace: "nowrap",
             }}
         >
-            {arrow}{Math.abs(value).toFixed(1)}%
+            {Math.abs(value)}%
+            {isPositive ? (
+                <TrendingUpIcon sx={{ fontSize: 12 }} />
+            ) : (
+                <TrendingDownIcon sx={{ fontSize: 12 }} />
+            )}
         </Box>
     );
-};
-
-const getCellValue = (row: NetworkMetricRow, key: string): number => {
-    return (row as unknown as Record<string, number>)[key] ?? 0;
-};
-
-const getChangeValue = (row: NetworkMetricRow, key: string): number | undefined => {
-    return (row as unknown as Record<string, number | undefined>)[`${key}_change`];
 };
 
 const NetworkTable: React.FC<NetworkTableProps> = ({
     title,
     icon,
     rows,
-    summary,
+    summaryRow,
     columns,
 }) => {
     const [open, setOpen] = useState(true);
+
+    const renderCell = (row: DummyRow, column: TableColumn) => {
+        const colId = column.id;
+
+        if (colId === "period") {
+            return (
+                <Typography sx={{ fontSize: "clamp(11px, 0.75vw, 13px)", fontWeight: 500, color: "#374151" }}>
+                    {row.period}
+                </Typography>
+            );
+        }
+
+        const curVal = row[colId] as number;
+        const prevVal = row[`${colId}_prev`] as number;
+        const change = pctChange(curVal, prevVal);
+        const formatType = METRIC_FORMAT[colId] || "number";
+
+        return (
+            <Box sx={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                <Box sx={{ display: "flex", alignItems: "center", gap: "clamp(4px, 0.3vw, 6px)" }}>
+                    <ChangeBadge value={change} />
+                    <Typography component="span" sx={{ fontSize: "clamp(11px, 0.75vw, 13px)", fontWeight: 600, color: "#111827" }}>
+                        {fmt(curVal, formatType)}
+                    </Typography>
+                </Box>
+                <Typography sx={{ fontSize: "clamp(9px, 0.6vw, 11px)", color: "#9CA3AF", lineHeight: 1.2 }}>
+                    {fmt(prevVal, formatType)}
+                </Typography>
+            </Box>
+        );
+    };
+
+    const renderSummaryRow = (_rows: DummyRow[], column: TableColumn) => {
+        const colId = column.id;
+
+        if (colId === "period") {
+            return (
+                <Typography sx={{ fontSize: "clamp(11px, 0.75vw, 13px)", fontWeight: 700, color: "#EC4899" }}>
+                    Summary
+                </Typography>
+            );
+        }
+
+        const curVal = summaryRow[colId] as number;
+        const prevVal = summaryRow[`${colId}_prev`] as number;
+        const change = pctChange(curVal, prevVal);
+        const formatType = METRIC_FORMAT[colId] || "number";
+
+        return (
+            <Box sx={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                <Box sx={{ display: "flex", alignItems: "center", gap: "clamp(4px, 0.3vw, 6px)" }}>
+                    <ChangeBadge value={change} />
+                    <Typography component="span" sx={{ fontSize: "clamp(11px, 0.75vw, 13px)", fontWeight: 700, color: "#111827" }}>
+                        {fmt(curVal, formatType)}
+                    </Typography>
+                </Box>
+                <Typography sx={{ fontSize: "clamp(9px, 0.6vw, 11px)", color: "#9CA3AF", lineHeight: 1.2 }}>
+                    {fmt(prevVal, formatType)}
+                </Typography>
+            </Box>
+        );
+    };
 
     return (
         <Box
@@ -124,154 +189,30 @@ const NetworkTable: React.FC<NetworkTableProps> = ({
                         <img
                             src={icon}
                             alt={title}
-                            style={{
-                                width: "clamp(16px, 1.2vw, 22px)",
-                                height: "clamp(16px, 1.2vw, 22px)",
-                                objectFit: "contain",
-                            }}
+                            style={{ width: "clamp(16px, 1.2vw, 22px)", height: "clamp(16px, 1.2vw, 22px)", objectFit: "contain" }}
                         />
                     )}
-                    <Typography
-                        sx={{
-                            fontSize: "clamp(13px, 0.95vw, 16px)",
-                            fontWeight: 600,
-                            color: "#111827",
-                        }}
-                    >
+                    <Typography sx={{ fontSize: "clamp(13px, 0.95vw, 16px)", fontWeight: 600, color: "#111827" }}>
                         {title}
                     </Typography>
                 </Box>
             </Box>
 
             <Collapse in={open}>
-                <TableContainer sx={{ overflowX: "auto" }}>
-                    <Table size="small" sx={{ minWidth: 700 }}>
-                        <TableHead>
-                            <TableRow
-                                sx={{
-                                    bgcolor: "#F9FAFB",
-                                    "& th": {
-                                        fontSize: "clamp(10px, 0.7vw, 12px)",
-                                        fontWeight: 600,
-                                        color: "#6B7280",
-                                        textTransform: "uppercase",
-                                        letterSpacing: "0.5px",
-                                        py: "clamp(6px, 0.5vw, 10px)",
-                                        px: "clamp(8px, 0.6vw, 12px)",
-                                        borderBottom: "1px solid #E5E7EB",
-                                        whiteSpace: "nowrap",
-                                    },
-                                }}
-                            >
-                                {columns.map((col) => (
-                                    <TableCell key={col.key} sx={{ width: col.width }}>
-                                        {col.label}
-                                    </TableCell>
-                                ))}
-                            </TableRow>
-                        </TableHead>
-                        <TableBody>
-                            {rows.map((row, idx) => (
-                                <TableRow
-                                    key={idx}
-                                    sx={{
-                                        "&:hover": { bgcolor: "#F9FAFB" },
-                                        "& td": {
-                                            fontSize: "clamp(11px, 0.75vw, 13px)",
-                                            fontWeight: 500,
-                                            color: "#111827",
-                                            py: "clamp(6px, 0.5vw, 10px)",
-                                            px: "clamp(8px, 0.6vw, 12px)",
-                                            borderBottom: "1px solid #F3F4F6",
-                                            whiteSpace: "nowrap",
-                                        },
-                                    }}
-                                >
-                                    {columns.map((col) => (
-                                        <TableCell key={col.key}>
-                                            {col.key === "period" ? (
-                                                <Typography
-                                                    sx={{
-                                                        fontSize: "clamp(11px, 0.75vw, 13px)",
-                                                        fontWeight: 500,
-                                                        color: "#374151",
-                                                    }}
-                                                >
-                                                    {row.period}
-                                                </Typography>
-                                            ) : (
-                                                <Box sx={{ display: "inline-flex", alignItems: "center" }}>
-                                                    <Typography
-                                                        component="span"
-                                                        sx={{
-                                                            fontSize: "clamp(11px, 0.75vw, 13px)",
-                                                            fontWeight: 500,
-                                                        }}
-                                                    >
-                                                        {col.format
-                                                            ? col.format(getCellValue(row, col.key))
-                                                            : formatNumber(getCellValue(row, col.key))}
-                                                    </Typography>
-                                                    <ChangeIndicator value={getChangeValue(row, col.key)} />
-                                                </Box>
-                                            )}
-                                        </TableCell>
-                                    ))}
-                                </TableRow>
-                            ))}
-
-                            <TableRow
-                                sx={{
-                                    bgcolor: "#FDF2F8",
-                                    "& td": {
-                                        fontSize: "clamp(11px, 0.75vw, 13px)",
-                                        fontWeight: 700,
-                                        color: "#111827",
-                                        py: "clamp(8px, 0.6vw, 12px)",
-                                        px: "clamp(8px, 0.6vw, 12px)",
-                                        borderBottom: "none",
-                                        whiteSpace: "nowrap",
-                                    },
-                                }}
-                            >
-                                {columns.map((col) => (
-                                    <TableCell key={col.key}>
-                                        {col.key === "period" ? (
-                                            <Typography
-                                                sx={{
-                                                    fontSize: "clamp(11px, 0.75vw, 13px)",
-                                                    fontWeight: 700,
-                                                    color: "#EC4899",
-                                                }}
-                                            >
-                                                Summary
-                                            </Typography>
-                                        ) : (
-                                            <Box sx={{ display: "inline-flex", alignItems: "center" }}>
-                                                <Typography
-                                                    component="span"
-                                                    sx={{
-                                                        fontSize: "clamp(11px, 0.75vw, 13px)",
-                                                        fontWeight: 700,
-                                                    }}
-                                                >
-                                                    {col.format
-                                                        ? col.format(getCellValue(summary, col.key))
-                                                        : formatNumber(getCellValue(summary, col.key))}
-                                                </Typography>
-                                                <ChangeIndicator value={getChangeValue(summary, col.key)} />
-                                            </Box>
-                                        )}
-                                    </TableCell>
-                                ))}
-                            </TableRow>
-                        </TableBody>
-                    </Table>
-                </TableContainer>
+                <CommonTable
+                    columns={columns}
+                    rows={rows}
+                    renderCell={renderCell}
+                    enableSummaryRow={true}
+                    renderSummaryRow={renderSummaryRow}
+                    summaryRowPosition="bottom"
+                    isLoading={false}
+                    isFirstLoad={false}
+                    emptyMessage="No data available"
+                />
             </Collapse>
         </Box>
     );
 };
 
-export { formatCurrency, formatNumber, formatPercent, formatDecimal };
 export default NetworkTable;
