@@ -282,11 +282,14 @@ export class KlaviyoService {
         return d;
     }
 
-    private get90DaysAgo(): Date {
-        const d = new Date();
+    private get90DaysAgo(fromDate?: Date | string) {
+        const baseDate = fromDate ? new Date(fromDate) : new Date();
+        const d = new Date(baseDate);
         d.setUTCDate(d.getUTCDate() - 90);
-        d.setUTCHours(0, 0, 0, 0);
-        return d;
+        const year = d.getUTCFullYear();
+        const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(d.getUTCDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
     }
 
     // ─── Pagination helper ──────────────────────────────────────
@@ -318,13 +321,11 @@ export class KlaviyoService {
 
     // ─── Campaign List (with pagination) ────────────────────────
 
-    private async fetchCampaignListByChannel(channel: 'email' | 'sms'): Promise<unknown[]> {
-        const start = this.getFirstOfMonth();
-        const end = this.getYesterday();
-        const startStr = `${this.formatDate(start)}T00:00:00+00:00`;
-        const endStr = `${this.formatDate(end)}T23:59:59+00:00`;
+    private async fetchCampaignListByChannel(requestData:any,channel: 'email' | 'sms'): Promise<unknown[]> {
+        const start    = `${requestData?.startDate}T00:00:00+00:00`;
+        const end      = `${requestData?.endDate}T23:59:59+00:00`;
 
-        const filter = `greater-or-equal(updated_at,${startStr}),less-or-equal(updated_at,${endStr}),equals(messages.channel,'${channel}')`;
+        const filter = `greater-or-equal(updated_at,${start}),less-or-equal(updated_at,${end}),equals(messages.channel,'${channel}'),any(status,['Sent','Cancelled'])`;
 
         return this.paginateAll(async (cursor) => {
             const api = new CampaignsApi(this.session);
@@ -350,10 +351,10 @@ export class KlaviyoService {
         });
     }
 
-    private async fetchCampaignList(): Promise<unknown[]> {
+    private async fetchCampaignList(requestData: string): Promise<unknown[]> {
         const [emailCampaigns, smsCampaigns] = await Promise.all([
-            this.fetchCampaignListByChannel('email'),
-            this.fetchCampaignListByChannel('sms'),
+            this.fetchCampaignListByChannel(requestData,'email'),
+            this.fetchCampaignListByChannel(requestData,'sms'),
         ]);
 
         const seen = new Set<string>();
@@ -370,9 +371,9 @@ export class KlaviyoService {
 
     // ─── Campaign Values Report─────────────────────────────────
 
-    private async fetchCampaignValuesReport(conversionMetricId: string): Promise<unknown[]> {
-        const start = this.get90DaysAgo();
-        const end = this.getYesterday();
+    private async fetchCampaignValuesReport(requestData: any): Promise<unknown[]> {
+        const start = requestData?.startDate;
+        const end   = requestData?.endDate;
 
         const statsToTry = [...ALL_CAMPAIGN_STATISTICS];
 
@@ -389,10 +390,10 @@ export class KlaviyoService {
                         attributes: {
                             statistics: statistics as typeof ALL_CAMPAIGN_STATISTICS extends readonly (infer U)[] ? U[] : never,
                             timeframe: {
-                                start: new Date(`${this.formatDate(start)}T00:00:00Z`),
-                                end: new Date(`${this.formatDate(end)}T23:59:59Z`),
+                                start: new Date(`${start}T00:00:00Z`),
+                                end: new Date(`${end}T23:59:59Z`),
                             },
-                            conversionMetricId,
+                            conversionMetricId: requestData?.conversionMetricId,
                             filter: `contains-any(send_channel,["email","sms"])`,
                         },
                     },
@@ -552,7 +553,7 @@ export class KlaviyoService {
     private async fetchFlowsByIds(flowIds: string[]): Promise<unknown[]> {
         if (flowIds.length === 0) return [];
         const results: unknown[] = [];
-        const batchSize = 20;
+        const batchSize = 200;
         for (let i = 0; i < flowIds.length; i += batchSize) {
             const batch = flowIds.slice(i, i + batchSize);
             const idsStr = batch.map((id) => `"${id}"`).join(',');
@@ -586,10 +587,10 @@ export class KlaviyoService {
     // ─── Flow Series Report─────────────────────────────────────
 
     private async fetchFlowSeriesReport(
-        conversionMetricId: string
+        requestData: any
     ): Promise<{ dateTimes: (string | Date)[]; results: unknown[] }> {
-        const start = this.getFirstOfMonth();
-        const end = this.getYesterday();
+        const start = requestData?.startDate;
+        const end   = requestData?.endDate;
 
         let dateTimes: (string | Date)[] = [];
         const allResults: unknown[] = [];
@@ -607,11 +608,11 @@ export class KlaviyoService {
                         attributes: {
                             statistics: statistics as typeof ALL_FLOW_STATISTICS extends readonly (infer U)[] ? U[] : never,
                             timeframe: {
-                                start: new Date(`${this.formatDate(start)}T00:00:00Z`),
-                                end: new Date(`${this.formatDate(end)}T23:59:59Z`),
+                                start: new Date(`${start}T00:00:00Z`),
+                                end: new Date(`${end}T23:59:59Z`),
                             },
                             interval: 'daily',
-                            conversionMetricId,
+                            conversionMetricId: requestData?.conversionMetricId,
                             filter: `contains-any(send_channel,["email","sms"])`,
                         },
                     },
@@ -854,14 +855,18 @@ export class KlaviyoService {
     // PUBLIC API — New methods (campaigns + flows + audience)
     // ═══════════════════════════════════════════════════════════
 
-    async getCampaignsWithMetrics(conversionMetricId: string): Promise<NormalizedCampaign[]> {
+    async getCampaignsWithMetrics(requestData: any): Promise<NormalizedCampaign[]> {
         try {
             logger.info('Klaviyo: Fetching campaign list...');
-            const rawCampaigns = await this.fetchCampaignList();
+            const campaignRequestData = {
+                ...requestData,
+                startDate: this.get90DaysAgo(requestData?.endDate),
+            };
+            const rawCampaigns = await this.fetchCampaignList(campaignRequestData);
             logger.info(`Klaviyo: Fetched ${rawCampaigns.length} campaigns`);
 
             logger.info('Klaviyo: Fetching campaign values report...');
-            const valuesReport = await this.fetchCampaignValuesReport(conversionMetricId);
+            const valuesReport = await this.fetchCampaignValuesReport(campaignRequestData);
             logger.info(`Klaviyo: Fetched ${valuesReport.length} campaign value entries`);
 
             logger.info('Klaviyo: Enriching audience names...');
@@ -878,10 +883,10 @@ export class KlaviyoService {
         }
     }
 
-    async getFlowsWithMetrics(conversionMetricId: string): Promise<NormalizedFlow[]> {
+    async getFlowsWithMetrics(requestData: any): Promise<NormalizedFlow[]> {
         try {
             logger.info('Klaviyo: Fetching flow series report...');
-            const seriesReport = await this.fetchFlowSeriesReport(conversionMetricId);
+            const seriesReport = await this.fetchFlowSeriesReport(requestData);
             logger.info(`Klaviyo: Fetched ${seriesReport.results.length} flow series entries across ${seriesReport.dateTimes.length} dates`);
 
             const flowIds = this.extractFlowIdsFromSeries(seriesReport.results);
@@ -905,8 +910,8 @@ export class KlaviyoService {
         flows: NormalizedFlow[];
     }> {
         const [campaigns, flows] = await Promise.all([
-            this.getCampaignsWithMetrics(requestData?.conversionMetricId),
-            this.getFlowsWithMetrics(requestData?.conversionMetricId),
+            this.getCampaignsWithMetrics(requestData),
+            this.getFlowsWithMetrics(requestData),
         ]);
         return { campaigns, flows };
     }
@@ -937,13 +942,11 @@ export class KlaviyoService {
         }
     }
 
-    async getCampaigns() {
+    async getCampaigns(requestData:any) {
         try {
-            const start = this.getFirstOfMonth();
-            const end = this.getYesterday();
-            const startStr = `${this.formatDate(start)}T00:00:00`;
-            const endStr = `${this.formatDate(end)}T23:59:59`;
-            const filter = `greater-or-equal(updated_at,${startStr}),less-or-equal(updated_at,${endStr}),equals(messages.channel,'email')`;
+            const startStr = `${requestData?.startDate}T00:00:00`;
+            const endStr   = `${requestData?.endDate}T23:59:59`;
+            const filter   = `greater-or-equal(updated_at,${startStr}),less-or-equal(updated_at,${endStr}),equals(messages.channel,'sms'),any(status,['Sent','Cancelled'])`;
             const campaigns = new CampaignsApi(this.session);
             const campaignsList = await campaigns.getCampaigns(filter);
             return campaignsList?.body?.data;
@@ -1410,4 +1413,3 @@ export class KlaviyoService {
 }
 
 export { KlaviyoService as klaviyoService };
-

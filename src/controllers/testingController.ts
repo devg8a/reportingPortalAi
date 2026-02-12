@@ -18,6 +18,7 @@ import clientDetails from "../db/models/clientDetails";
 import { SheetLib } from "../liberaries/GoogleSheet/sheetLib";
 import { klaviyoService } from "../liberaries/PaidMedia/Klaviyo/klaviyo-service";
 import captureToCentralStorage from "../liberaries/central-storage-service";
+import {CjService} from "../liberaries/Affiliate/Cj/cj-service"
 
 export const affiliateNetworkTestingApi = async (req, res) => {
 	try {
@@ -406,18 +407,19 @@ export const testRefreshToken = async (req, res) => {
 	res.status(200).json({ status_code: 200, success: true, message: 'Testing refresh token successfully.', data: req.body });
 }
 
-export const klaviyoTest = async(req,res)=>{
-	try{
-		
+export const klaviyoTest = async (req, res) => {
+	try {
 		const klaviyoLib = new klaviyoService(req.body.accountkey);
-		// const klaviyyo   = await klaviyoLib.getProfiles();
 		// const klaviyyo   = await klaviyoLib.getMetrices();
-		// const klaviyyo   = await klaviyoLib.getCampaigns();
+		// const klaviyyo   = await klaviyoLib.getProfiles();
+		// const klaviyyo   = await klaviyoLib.getCampaigns(req.body);
 		// const klaviyyo   = await klaviyoLib.getFlows();
+		// const klaviyyo   = await klaviyoLib.reporting(req.body);
+		// const klaviyyo   = await klaviyoLib.flowReporting(req.body);
 		const klaviyyo   = await klaviyoLib.fetchKlaviyoRecords(req.body);
 		res.status(200).json({ status_code: 200, success: true, message: 'klaviyo triggered successfully.', data: klaviyyo });
-	}catch(error){
-		console.log('error==>',error);
+	} catch (error) {
+		console.log('error==>', error);
 		res.status(422).json({ status_code: 422, success: false, message: 'Error in klaviyo.', data: error });
 	}
 }
