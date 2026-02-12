@@ -15,6 +15,18 @@ async function captureToCentralStorage(records, clientId, connectionId, network)
         bulkOpsByYear[year] = [];
       }
 
+      const setObj: Record<string, unknown> = {};
+      const dataRecord = recordsByDate as Record<string, unknown>;
+      for (const [key, value] of Object.entries(dataRecord)) {
+        if (Array.isArray(value) && value.length > 0) {
+          setObj[`data.${key}`] = value;
+        }
+      }
+
+      if (Object.keys(setObj).length === 0) {
+        return;
+      }
+
       bulkOpsByYear[year].push({
         updateOne: {
           filter: {
@@ -30,9 +42,7 @@ async function captureToCentralStorage(records, clientId, connectionId, network)
               network: network,
               date: new Date(date),
             },
-            $set: {
-              data: recordsByDate,
-            },
+            $set: setObj,
           },
           upsert: true,
         },
