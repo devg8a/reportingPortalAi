@@ -666,7 +666,8 @@ export class KlaviyoService {
     private normalizeCampaigns(
         rawCampaigns: unknown[],
         valuesReport: unknown[],
-        audienceNameMap: Map<string, string | null>
+        audienceNameMap: Map<string, string | null>,
+        requestData: any,
     ): NormalizedCampaign[] {
         const statsById = new Map<string, Record<string, unknown>>();
         for (const entry of valuesReport) {
@@ -681,8 +682,8 @@ export class KlaviyoService {
             }
         }
 
-        const startDate = this.formatDate(this.getFirstOfMonth());
-        const endDate = this.formatDate(this.getYesterday());
+        // const startDate = this.formatDate(this.getFirstOfMonth());
+        // const endDate = this.formatDate(this.getYesterday());
         const normalized: NormalizedCampaign[] = [];
         for (const c of rawCampaigns) {
             const campaign = c as {
@@ -692,8 +693,7 @@ export class KlaviyoService {
                     name?: string;
                     status?: string;
                     archived?: boolean;
-                    sendTime?: string | Date;
-                    sendStrategy?: {datetime?:string | Date};
+                    send_time?: string;
                     audiences?: {
                         included?: unknown[];
                         excluded?: unknown[];
@@ -701,14 +701,13 @@ export class KlaviyoService {
                 };
             };
 
-            const attrs = campaign.attributes ?? {};
-            const rawSendTimeVal = attrs.sendTime ?? attrs.sendStrategy?.datetime;
-            const rawSendTime = rawSendTimeVal instanceof Date ? rawSendTimeVal.toISOString() : String(rawSendTimeVal);
-            const sendDate = rawSendTime ? rawSendTime.split('T')[0] : '';
+            const attrs       = campaign.attributes ?? {};
+            const rawSendTime = attrs.send_time ?? '';
+            const sendDate    = rawSendTime ? rawSendTime.split('T')[0] : '';
 
-            // if (sendDate && (sendDate < startDate || sendDate > endDate)) {
-            //     continue;
-            // }
+            if (sendDate && (sendDate < requestData?.startDate || sendDate > requestData?.endDate)) {
+                continue;
+            }
 
             const buildAudienceMap = (
                 entries?: unknown[]
@@ -874,7 +873,7 @@ export class KlaviyoService {
             logger.info(`Klaviyo: Found ${audienceIds.size} unique audience IDs to resolve`);
             const audienceNameMap = await this.enrichAudiences(audienceIds);
 
-            const campaigns = this.normalizeCampaigns(rawCampaigns, valuesReport, audienceNameMap);
+            const campaigns = this.normalizeCampaigns(rawCampaigns, valuesReport, audienceNameMap,campaignRequestData);
             logger.info(`Klaviyo: Normalized ${campaigns.length} campaigns with metrics`);
             return campaigns;
         } catch (error) {
