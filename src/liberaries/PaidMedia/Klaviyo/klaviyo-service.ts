@@ -13,6 +13,7 @@ import {
     MetricAggregateQuery,
 } from 'klaviyo-api';
 import logger from '../../../utils/logger';
+import captureToCentralStorage from '../../central-storage-service';
 
 // ─── Reporting Rate Limiter ─────────────────────────────────────
 // Enforces Klaviyo reporting endpoint limits simultaneously:
@@ -121,18 +122,14 @@ interface NormalizedCampaign {
     statistics: Record<string, unknown>;
 }
 
-interface NormalizedFlowDateEntry {
-    date: string;
-    statistics: Record<string, unknown>;
-}
-
 interface NormalizedFlow {
     id: string;
     name: string;
     type: string;
     status: string;
     archived: boolean;
-    data: NormalizedFlowDateEntry[];
+    date: string;
+    statistics: Record<string, number>;
 }
 
 interface CampaignReportRequest {
@@ -553,7 +550,7 @@ export class KlaviyoService {
     private async fetchFlowsByIds(flowIds: string[]): Promise<unknown[]> {
         if (flowIds.length === 0) return [];
         const results: unknown[] = [];
-        const batchSize = 200;
+        const batchSize = 20;
         for (let i = 0; i < flowIds.length; i += batchSize) {
             const batch = flowIds.slice(i, i + batchSize);
             const idsStr = batch.map((id) => `"${id}"`).join(',');
@@ -753,19 +750,7 @@ export class KlaviyoService {
         rawFlows: unknown[],
         dateTimes: (string | Date)[],
         seriesResults: unknown[]
-    ): {
-        date: string;
-        data: {
-            id: string;
-            name: string;
-            type: 'flow';
-            status: string;
-            archived: boolean;
-            statistics: Record<string, number>;
-        }[];
-    }[] {
-
-        // 1. Build flow metadata
+    ): NormalizedFlow[] {
         const flowMeta = new Map<
             string,
             { name: string; status: string; archived: boolean }
@@ -788,20 +773,8 @@ export class KlaviyoService {
             });
         }
 
-        // 2. Date → flows map
-        const dateMap = new Map<
-            string,
-            {
-                id: string;
-                name: string;
-                type: 'flow';
-                status: string;
-                archived: boolean;
-                statistics: Record<string, number>;
-            }[]
-        >();
+        const normalized: NormalizedFlow[] = [];
 
-        // 3. Process series results
         for (const entry of seriesResults) {
             const row = entry as {
                 groupings?: { flow_id?: string };
@@ -826,26 +799,19 @@ export class KlaviyoService {
                     }
                 }
 
-                if (!dateMap.has(date)) {
-                    dateMap.set(date, []);
-                }
-
-                dateMap.get(date)!.push({
+                normalized.push({
                     id: flowId,
                     name: meta.name,
                     type: 'flow',
                     status: meta.status,
                     archived: meta.archived,
+                    date,
                     statistics: stats,
                 });
             }
         }
 
-        // 4. Convert map → array
-        return Array.from(dateMap.entries()).map(([date, data]) => ({
-            date,
-            data,
-        }));
+        return normalized;
     }
 
 
@@ -904,7 +870,13 @@ export class KlaviyoService {
         }
     }
 
-    async fetchKlaviyoRecords(requestData): Promise<{
+    async fetchKlaviyoRecords(requestData: {
+        startDate?: string;
+        endDate?: string;
+        clientId?: string;
+        connectionId?: string;
+        [key: string]: unknown;
+    }): Promise<{
         campaigns: NormalizedCampaign[];
         flows: NormalizedFlow[];
     }> {
@@ -912,6 +884,41 @@ export class KlaviyoService {
             this.getCampaignsWithMetrics(requestData),
             this.getFlowsWithMetrics(requestData),
         ]);
+
+        if (requestData?.clientId && requestData?.connectionId) {
+            const recordsByDate: Record<string, { campaigns: NormalizedCampaign[]; flows: NormalizedFlow[] }> = {};
+
+            for (const campaign of campaigns) {
+                const date = campaign.send_time || requestData?.startDate || '';
+                if (!date) continue;
+                if (!recordsByDate[date]) {
+                    recordsByDate[date] = { campaigns: [], flows: [] };
+                }
+                recordsByDate[date].campaigns.push(campaign);
+            }
+
+            for (const flow of flows) {
+                const date = flow.date || requestData?.startDate || '';
+                if (!date) continue;
+                if (!recordsByDate[date]) {
+                    recordsByDate[date] = { campaigns: [], flows: [] };
+                }
+                recordsByDate[date].flows.push(flow);
+            }
+
+            try {
+                await captureToCentralStorage(
+                    recordsByDate,
+                    requestData.clientId,
+                    requestData.connectionId,
+                    'klaviyo'
+                );
+                logger.info(`Klaviyo: Stored ${Object.keys(recordsByDate).length} days of records to central storage`);
+            } catch (error) {
+                logger.error(error, 'Error storing Klaviyo records to central storage');
+            }
+        }
+
         return { campaigns, flows };
     }
 
@@ -1412,3 +1419,4 @@ export class KlaviyoService {
 }
 
 export { KlaviyoService as klaviyoService };
+
