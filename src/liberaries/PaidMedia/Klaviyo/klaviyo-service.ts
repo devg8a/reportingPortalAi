@@ -679,8 +679,6 @@ export class KlaviyoService {
             }
         }
 
-        // const startDate = this.formatDate(this.getFirstOfMonth());
-        // const endDate = this.formatDate(this.getYesterday());
         const normalized: NormalizedCampaign[] = [];
         for (const c of rawCampaigns) {
             const campaign = c as {
@@ -690,7 +688,7 @@ export class KlaviyoService {
                     name?: string;
                     status?: string;
                     archived?: boolean;
-                    send_time?: string;
+                    sendTime?: string;
                     audiences?: {
                         included?: unknown[];
                         excluded?: unknown[];
@@ -699,8 +697,8 @@ export class KlaviyoService {
             };
 
             const attrs       = campaign.attributes ?? {};
-            const rawSendTime = attrs.send_time ?? '';
-            const sendDate    = rawSendTime ? rawSendTime.split('T')[0] : '';
+            const rawSendTime = attrs.sendTime ?? '';
+            const sendDate    = rawSendTime ? new Date(rawSendTime).toISOString().split('T')[0] : '';
 
             if (sendDate && (sendDate < requestData?.startDate || sendDate > requestData?.endDate)) {
                 continue;
@@ -905,7 +903,7 @@ export class KlaviyoService {
                 }
                 recordsByDate[date].flows.push(flow);
             }
-
+            // logger.info(recordsByDate,'recordsByDate');
             try {
                 await captureToCentralStorage(
                     recordsByDate,
@@ -1419,4 +1417,3 @@ export class KlaviyoService {
 }
 
 export { KlaviyoService as klaviyoService };
-
