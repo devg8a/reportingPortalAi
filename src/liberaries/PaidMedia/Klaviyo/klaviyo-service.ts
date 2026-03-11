@@ -272,6 +272,40 @@ export class KlaviyoService {
         // }
     }
 
+    // ─── Error helpers ────────────────────────────────────────
+
+    /**
+     * Check if a Klaviyo API error is specifically about an invalid conversion metric.
+     * Inspects both the HTTP status and the error detail from Klaviyo's response body.
+     */
+    private isConversionMetricError(err: unknown): boolean {
+        if (!err || typeof err !== 'object' || !('response' in err)) return false;
+        const response = (err as { response?: { status?: number; data?: { errors?: Array<{ detail?: string }> } } }).response;
+        if (response?.status !== 400) return false;
+        const errors = response?.data?.errors;
+        if (Array.isArray(errors)) {
+            return errors.some((e) =>
+                typeof e.detail === 'string' &&
+                e.detail.toLowerCase().includes('conversion metric')
+            );
+        }
+        // Fallback: if we can't parse errors array, treat any 400 as potential conversion metric issue
+        return true;
+    }
+
+    /**
+     * Extract a readable error summary from a Klaviyo API error response.
+     */
+    private getKlaviyoErrorDetail(err: unknown): string {
+        if (!err || typeof err !== 'object' || !('response' in err)) return 'Unknown error';
+        const response = (err as { response?: { status?: number; data?: { errors?: Array<{ detail?: string; title?: string }> } } }).response;
+        const errors = response?.data?.errors;
+        if (Array.isArray(errors) && errors.length > 0) {
+            return errors.map((e) => `${e.title ?? 'Error'}: ${e.detail ?? 'no detail'}`).join('; ');
+        }
+        return `HTTP ${response?.status ?? 'unknown'}`;
+    }
+
     // ─── Date helpers ───────────────────────────────────────────
     private get90DaysAgo(fromDate?: Date | string) {
         const baseDate = fromDate ? new Date(fromDate) : new Date();
@@ -372,7 +406,7 @@ export class KlaviyoService {
         const results: unknown[] = [];
         let pageCursor: string | undefined;
 
-        const makeRequest = async (statistics: readonly string[]): Promise<void> => {
+        const makeRequest = async (statistics: readonly string[], conversionMetricId?: string): Promise<void> => {
             do {
                 await this.reportingLimiter.acquire();
                 const api = new ReportingApi(this.session);
@@ -385,7 +419,7 @@ export class KlaviyoService {
                                 start: new Date(`${start}T00:00:00Z`),
                                 end: new Date(`${end}T23:59:59Z`),
                             },
-                            conversionMetricId: requestData?.conversionMetricId,
+                            conversionMetricId,
                             filter: `contains-any(send_channel,["email","sms"])`,
                         },
                     },
@@ -403,26 +437,35 @@ export class KlaviyoService {
         };
 
         try {
-            await makeRequest(statsToTry);
+            await makeRequest(statsToTry, requestData?.conversionMetricId);
         } catch (err: any) {
-            console.log("fetchCampaignValuesReport error==>",err?.response?.data?.errors);
-            console.log("requestData==>",requestData);
-            const isConversionMetricError =
-                err &&
-                typeof err === 'object' &&
-                'response' in err &&
-                (err as { response?: { status?: number } }).response?.status === 400;
+            const errorDetail = this.getKlaviyoErrorDetail(err);
+            logger.warn(`Klaviyo: Campaign values report failed [conversionMetricId=${requestData?.conversionMetricId}]: ${errorDetail}`);
 
-            if (isConversionMetricError) {
-                logger.warn('Klaviyo: Conversion metric not supported for campaign values, retrying without conversion stats');
-                const CONVERSION_STATS = new Set([
-                    'conversion_rate', 'conversion_uniques', 'conversion_value',
-                    'conversions', 'average_order_value', 'revenue_per_recipient',
-                ]);
-                const basicStats = statsToTry.filter((s) => !CONVERSION_STATS.has(s));
+            if (this.isConversionMetricError(err) && requestData?.conversionMetricId) {
+                // First retry: drop the invalid conversionMetricId but keep all stats
+                // so Klaviyo uses its default conversion metric
+                logger.warn('Klaviyo: Retrying campaign values without conversionMetricId (keeping all stats)');
                 results.length = 0;
                 pageCursor = undefined;
-                await makeRequest(basicStats);
+                try {
+                    await makeRequest(statsToTry, undefined);
+                } catch (retryErr: any) {
+                    // Second retry: also remove conversion stats entirely
+                    if (this.isConversionMetricError(retryErr)) {
+                        logger.warn('Klaviyo: Retrying campaign values without conversion stats entirely');
+                        const CONVERSION_STATS = new Set([
+                            'conversion_rate', 'conversion_uniques', 'conversion_value',
+                            'conversions', 'average_order_value', 'revenue_per_recipient',
+                        ]);
+                        const basicStats = statsToTry.filter((s) => !CONVERSION_STATS.has(s));
+                        results.length = 0;
+                        pageCursor = undefined;
+                        await makeRequest(basicStats, undefined);
+                    } else {
+                        throw retryErr;
+                    }
+                }
             } else {
                 throw err;
             }
@@ -601,7 +644,7 @@ export class KlaviyoService {
 
         const statsToTry = [...ALL_FLOW_STATISTICS];
 
-        const makeRequest = async (statistics: readonly string[]): Promise<void> => {
+        const makeRequest = async (statistics: readonly string[], conversionMetricId?: string): Promise<void> => {
             do {
                 await this.reportingLimiter.acquire();
                 const api = new ReportingApi(this.session);
@@ -615,7 +658,7 @@ export class KlaviyoService {
                                 end: new Date(`${end}T23:59:59Z`),
                             },
                             interval: 'daily',
-                            conversionMetricId: requestData?.conversionMetricId,
+                            conversionMetricId,
                             filter: `contains-any(send_channel,["email","sms"])`,
                         },
                     },
@@ -638,26 +681,35 @@ export class KlaviyoService {
         };
 
         try {
-            await makeRequest(statsToTry);
+            await makeRequest(statsToTry, requestData?.conversionMetricId);
         } catch (err: any) {
-            console.log("fetchFlowSeriesReport error==>",err?.response?.data?.errors);
-            console.log("requestData==>",requestData);
-            const isConversionMetricError =
-                err &&
-                typeof err === 'object' &&
-                'response' in err &&
-                (err as { response?: { status?: number } }).response?.status === 400;
+            const errorDetail = this.getKlaviyoErrorDetail(err);
+            logger.warn(`Klaviyo: Flow series report failed [conversionMetricId=${requestData?.conversionMetricId}]: ${errorDetail}`);
 
-            if (isConversionMetricError) {
-                logger.warn('Klaviyo: Conversion metric not supported for flow series, retrying without conversion stats');
-                const CONVERSION_STATS = new Set([
-                    'conversion_rate', 'conversion_uniques', 'conversion_value',
-                    'conversions', 'average_order_value', 'revenue_per_recipient',
-                ]);
-                const basicStats = statsToTry.filter((s) => !CONVERSION_STATS.has(s));
+            if (this.isConversionMetricError(err) && requestData?.conversionMetricId) {
+                // First retry: drop the invalid conversionMetricId but keep all stats
+                // so Klaviyo uses its default conversion metric
+                logger.warn('Klaviyo: Retrying flow series without conversionMetricId (keeping all stats)');
                 allResults.length = 0;
                 pageCursor = undefined;
-                await makeRequest(basicStats);
+                try {
+                    await makeRequest(statsToTry, undefined);
+                } catch (retryErr: any) {
+                    // Second retry: also remove conversion stats entirely
+                    if (this.isConversionMetricError(retryErr)) {
+                        logger.warn('Klaviyo: Retrying flow series without conversion stats entirely');
+                        const CONVERSION_STATS = new Set([
+                            'conversion_rate', 'conversion_uniques', 'conversion_value',
+                            'conversions', 'average_order_value', 'revenue_per_recipient',
+                        ]);
+                        const basicStats = statsToTry.filter((s) => !CONVERSION_STATS.has(s));
+                        allResults.length = 0;
+                        pageCursor = undefined;
+                        await makeRequest(basicStats, undefined);
+                    } else {
+                        throw retryErr;
+                    }
+                }
             } else {
                 throw err;
             }
