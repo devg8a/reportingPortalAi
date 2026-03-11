@@ -10,10 +10,11 @@ import {
     RetryWithExponentialBackoff,
     CampaignValuesRequestDTO,
     FlowSeriesRequestDTO,
-    MetricAggregateQuery,
 } from 'klaviyo-api';
 import logger from '../../../utils/logger';
-import captureToCentralStorage from '../../central-storage-service';
+import { getCentralStorageModel } from "../../../db/schema/dynamic-central-model";
+import { getMongoDbObjectId } from "../../../helper/helper";
+import ErrorLogs from '../../../db/models/errorLogs';
 
 // ─── Reporting Rate Limiter ─────────────────────────────────────
 // Enforces Klaviyo reporting endpoint limits simultaneously:
@@ -115,9 +116,10 @@ interface NormalizedCampaign {
     send_time: string;
     status: string;
     archived: boolean;
+    message_id: string;
     audiences: {
-        included: Record<string, { name: string | null }>;
-        excluded: Record<string, { name: string | null }>;
+        included: Record<string, AudienceInfo>;
+        excluded: Record<string, AudienceInfo>;
     };
     statistics: Record<string, unknown>;
 }
@@ -132,53 +134,58 @@ interface NormalizedFlow {
     statistics: Record<string, number>;
 }
 
-interface CampaignReportRequest {
-    startDate: string;
-    endDate: string;
-    metricId?: string;
-    timezone?: string;
-}
+// interface CampaignReportRequest {
+//     startDate: string;
+//     endDate: string;
+//     metricId?: string;
+//     timezone?: string;
+// }
 
-interface DailyMetricRecord {
-    date: string;
-    count: number;
-    unique: number;
-    sum_value: number;
-}
+// interface DailyMetricRecord {
+//     date: string;
+//     count: number;
+//     unique: number;
+//     sum_value: number;
+// }
 
-interface CampaignDailyRecord {
-    date: string;
-    campaign_id: string;
-    campaign_name: string;
-    count: number;
-    unique: number;
-    sum_value: number;
-}
+// interface CampaignDailyRecord {
+//     date: string;
+//     campaign_id: string;
+//     campaign_name: string;
+//     count: number;
+//     unique: number;
+//     sum_value: number;
+// }
 
-interface CampaignDailyMetricsRecord {
-    date: string;
-    campaign_id: string;
-    campaign_name: string;
-    total_recipients: number;
-    unique_opens: number;
-    unique_clicks: number;
-    open_rate: number;
-    click_rate: number;
-    placed_order: number;
-    placed_order_value: number;
-    placed_order_rate: number;
-    bounced: number;
-    bounce_rate: number;
-}
+// interface CampaignDailyMetricsRecord {
+//     date: string;
+//     campaign_id: string;
+//     campaign_name: string;
+//     total_recipients: number;
+//     unique_opens: number;
+//     unique_clicks: number;
+//     open_rate: number;
+//     click_rate: number;
+//     placed_order: number;
+//     placed_order_value: number;
+//     placed_order_rate: number;
+//     bounced: number;
+//     bounce_rate: number;
+// }
 
-interface MetricAggregateResponseData {
-    attributes?: {
-        dates?: (string | Date)[];
-        data?: Array<{
-            dimensions?: string[];
-            measurements?: Record<string, number[]>;
-        }>;
-    };
+// interface MetricAggregateResponseData {
+//     attributes?: {
+//         dates?: (string | Date)[];
+//         data?: Array<{
+//             dimensions?: string[];
+//             measurements?: Record<string, number[]>;
+//         }>;
+//     };
+// }
+
+interface AudienceInfo {
+    name: string;
+    type: string;
 }
 
 // ─── Statistics constants ───────────────────────────────────────
@@ -208,6 +215,7 @@ const ALL_CAMPAIGN_STATISTICS = [
     'revenue_per_recipient',
     'spam_complaint_rate',
     'spam_complaints',
+    'text_message_spend',
     'unsubscribe_rate',
     'unsubscribe_uniques',
     'unsubscribes',
@@ -249,36 +257,22 @@ export class KlaviyoService {
     private session: ApiKeySession;
     private reportingLimiter: ReportingRateLimiter;
 
-    constructor(privateKey: string) {
-        const retry = new RetryWithExponentialBackoff({
-            retryCodes: [429, 503, 504, 524],
-            numRetries: 5,
-            maxInterval: 120,
-        });
-        this.session = new ApiKeySession(privateKey, retry);
+    constructor() {
         this.reportingLimiter = new ReportingRateLimiter();
     }
 
+    private initializeSession(privateKey: string) {
+        // if (!this.session) {
+            const retry = new RetryWithExponentialBackoff({
+                retryCodes: [429, 503, 504, 524],
+                numRetries: 5,
+                maxInterval: 120,
+            });
+            this.session = new ApiKeySession(privateKey, retry);
+        // }
+    }
+
     // ─── Date helpers ───────────────────────────────────────────
-
-    private formatDate(d: Date): string {
-        return d.toISOString().split('T')[0];
-    }
-
-    private getYesterday(): Date {
-        const d = new Date();
-        d.setUTCDate(d.getUTCDate() - 1);
-        d.setUTCHours(0, 0, 0, 0);
-        return d;
-    }
-
-    private getFirstOfMonth(): Date {
-        const d = new Date();
-        d.setUTCDate(1);
-        d.setUTCHours(0, 0, 0, 0);
-        return d;
-    }
-
     private get90DaysAgo(fromDate?: Date | string) {
         const baseDate = fromDate ? new Date(fromDate) : new Date();
         const d = new Date(baseDate);
@@ -290,7 +284,6 @@ export class KlaviyoService {
     }
 
     // ─── Pagination helper ──────────────────────────────────────
-
     private async paginateAll<T>(
         fetchPage: (cursor?: string) => Promise<{ data: T[]; nextCursor?: string }>
     ): Promise<T[]> {
@@ -318,11 +311,13 @@ export class KlaviyoService {
 
     // ─── Campaign List (with pagination) ────────────────────────
 
-    private async fetchCampaignListByChannel(requestData:any,channel: 'email' | 'sms'): Promise<unknown[]> {
-        const start    = `${requestData?.startDate}T00:00:00+00:00`;
-        const end      = `${requestData?.endDate}T23:59:59+00:00`;
+    private async fetchCampaignListByChannel(requestData: any, channel: 'email' | 'sms', statuses: string[] = ['Sent', 'Cancelled']  // 👈 Add as parameter with default
+    ): Promise<unknown[]> {
+        const start = `${requestData?.startDate}T00:00:00+00:00`;
+        const end = `${requestData?.endDate}T23:59:59+00:00`;
+        const statusesStr = statuses.map(s => `"${s}"`).join(',');
 
-        const filter = `greater-or-equal(updated_at,${start}),less-or-equal(updated_at,${end}),equals(messages.channel,'${channel}'),any(status,['Sent','Cancelled'])`;
+        const filter = `greater-or-equal(updated_at,${start}),less-or-equal(updated_at,${end}),equals(messages.channel,'${channel}'),any(status,[${statusesStr}])`;
 
         return this.paginateAll(async (cursor) => {
             const api = new CampaignsApi(this.session);
@@ -340,9 +335,9 @@ export class KlaviyoService {
             });
             const body = resp.body as unknown as Record<string, unknown>;
             const data = ((body?.data ?? []) as unknown[]).map(item => ({
-                            ...(item as Record<string, unknown>),
-                            channel, // 👈 inject here
-                        }));
+                ...(item as Record<string, unknown>),
+                channel, // 👈 inject here
+            }));
             const nextCursor = this.extractCursor(body);
             return { data, nextCursor };
         });
@@ -350,8 +345,8 @@ export class KlaviyoService {
 
     private async fetchCampaignList(requestData: string): Promise<unknown[]> {
         const [emailCampaigns, smsCampaigns] = await Promise.all([
-            this.fetchCampaignListByChannel(requestData,'email'),
-            this.fetchCampaignListByChannel(requestData,'sms'),
+            this.fetchCampaignListByChannel(requestData, 'email'),
+            this.fetchCampaignListByChannel(requestData, 'sms'),
         ]);
 
         const seen = new Set<string>();
@@ -370,7 +365,7 @@ export class KlaviyoService {
 
     private async fetchCampaignValuesReport(requestData: any): Promise<unknown[]> {
         const start = requestData?.startDate;
-        const end   = requestData?.endDate;
+        const end = requestData?.endDate;
 
         const statsToTry = [...ALL_CAMPAIGN_STATISTICS];
 
@@ -395,7 +390,7 @@ export class KlaviyoService {
                         },
                     },
                 };
-
+                console.log("fetchCampaignValuesReport requestBody==>",requestBody);
                 const resp = await api.queryCampaignValues(requestBody, {
                     pageCursor,
                 });
@@ -409,7 +404,9 @@ export class KlaviyoService {
 
         try {
             await makeRequest(statsToTry);
-        } catch (err: unknown) {
+        } catch (err: any) {
+            console.log("fetchCampaignValuesReport error==>",err?.response?.data?.errors);
+            console.log("requestData==>",requestData);
             const isConversionMetricError =
                 err &&
                 typeof err === 'object' &&
@@ -447,7 +444,7 @@ export class KlaviyoService {
             const extractIds = (entries?: unknown[]) => {
                 if (!entries) return;
                 for (const entry of entries) {
-                    if (typeof entry === 'string') { 
+                    if (typeof entry === 'string') {
                         ids.add(entry);
                     } else if (entry && typeof entry === 'object') {
                         const id = (entry as { id?: string }).id;
@@ -461,9 +458,9 @@ export class KlaviyoService {
         return ids;
     }
 
-    private async batchLookupSegments(ids: string[]): Promise<Map<string, string>> {
+    private async batchLookupSegments(ids: string[]): Promise<Map<string, AudienceInfo>> {
         if (ids.length === 0) return new Map();
-        const nameMap = new Map<string, string>();
+        const nameMap = new Map<string, AudienceInfo>();
 
         const batchSize = 20;
         for (let i = 0; i < ids.length; i += batchSize) {
@@ -478,14 +475,19 @@ export class KlaviyoService {
                     fieldsSegment: ['name'],
                     pageCursor: cursor,
                 });
+                // console.log("resp==>",resp);
                 const body = resp.body as unknown as Record<string, unknown>;
                 const data = (body?.data ?? []) as Array<{
                     id: string;
+                    type: "segment";
                     attributes?: { name?: string };
                 }>;
                 for (const item of data) {
                     if (item.id && item.attributes?.name) {
-                        nameMap.set(item.id, item.attributes.name);
+                        nameMap.set(item.id, {
+                            name: item.attributes.name,
+                            type: item.type
+                        });
                     }
                 }
                 return { data, nextCursor: this.extractCursor(body) };
@@ -494,9 +496,9 @@ export class KlaviyoService {
         return nameMap;
     }
 
-    private async batchLookupLists(ids: string[]): Promise<Map<string, string>> {
+    private async batchLookupLists(ids: string[]): Promise<Map<string, AudienceInfo>> {
         if (ids.length === 0) return new Map();
-        const nameMap = new Map<string, string>();
+        const nameMap = new Map<string, AudienceInfo>();
 
         const batchSize = 20;
         for (let i = 0; i < ids.length; i += batchSize) {
@@ -514,11 +516,15 @@ export class KlaviyoService {
                 const body = resp.body as unknown as Record<string, unknown>;
                 const data = (body?.data ?? []) as Array<{
                     id: string;
+                    type: "list";
                     attributes?: { name?: string };
                 }>;
                 for (const item of data) {
                     if (item.id && item.attributes?.name) {
-                        nameMap.set(item.id, item.attributes.name);
+                        nameMap.set(item.id, {
+                            name: item.attributes.name,
+                            type: item.type
+                        });
                     }
                 }
                 return { data, nextCursor: this.extractCursor(body) };
@@ -529,9 +535,9 @@ export class KlaviyoService {
 
     private async enrichAudiences(
         audienceIds: Set<string>
-    ): Promise<Map<string, string | null>> {
+    ): Promise<Map<string, AudienceInfo | null>> {
         const allIds = Array.from(audienceIds);
-        const nameMap = new Map<string, string | null>();
+        const nameMap = new Map<string, AudienceInfo | null>();
 
         const [segmentNames, listNames] = await Promise.all([
             this.batchLookupSegments(allIds),
@@ -539,8 +545,8 @@ export class KlaviyoService {
         ]);
 
         for (const id of allIds) {
-            const name = segmentNames.get(id) ?? listNames.get(id) ?? null;
-            nameMap.set(id, name);
+            const audience = segmentNames.get(id) ?? listNames.get(id) ?? null;
+            nameMap.set(id, audience);
         }
         return nameMap;
     }
@@ -587,7 +593,7 @@ export class KlaviyoService {
         requestData: any
     ): Promise<{ dateTimes: (string | Date)[]; results: unknown[] }> {
         const start = requestData?.startDate;
-        const end   = requestData?.endDate;
+        const end = requestData?.endDate;
 
         let dateTimes: (string | Date)[] = [];
         const allResults: unknown[] = [];
@@ -614,7 +620,7 @@ export class KlaviyoService {
                         },
                     },
                 };
-
+                console.log("fetchFlowSeriesReport requestBody==>",requestBody);
                 const resp = await api.queryFlowSeries(requestBody, {
                     pageCursor,
                 });
@@ -633,7 +639,9 @@ export class KlaviyoService {
 
         try {
             await makeRequest(statsToTry);
-        } catch (err: unknown) {
+        } catch (err: any) {
+            console.log("fetchFlowSeriesReport error==>",err?.response?.data?.errors);
+            console.log("requestData==>",requestData);
             const isConversionMetricError =
                 err &&
                 typeof err === 'object' &&
@@ -663,7 +671,7 @@ export class KlaviyoService {
     private normalizeCampaigns(
         rawCampaigns: unknown[],
         valuesReport: unknown[],
-        audienceNameMap: Map<string, string | null>,
+        audienceNameMap: Map<string, AudienceInfo | null>,
         requestData: any,
     ): NormalizedCampaign[] {
         const statsById = new Map<string, Record<string, unknown>>();
@@ -694,11 +702,12 @@ export class KlaviyoService {
                         excluded?: unknown[];
                     };
                 };
+                relationships?: any;
             };
 
-            const attrs       = campaign.attributes ?? {};
+            const attrs = campaign.attributes ?? {};
             const rawSendTime = attrs.sendTime ?? '';
-            const sendDate    = rawSendTime ? new Date(rawSendTime).toISOString().split('T')[0] : '';
+            const sendDate = rawSendTime ? new Date(rawSendTime).toISOString().split('T')[0] : '';
 
             if (sendDate && (sendDate < requestData?.startDate || sendDate > requestData?.endDate)) {
                 continue;
@@ -706,8 +715,8 @@ export class KlaviyoService {
 
             const buildAudienceMap = (
                 entries?: unknown[]
-            ): Record<string, { name: string | null }> => {
-                const result: Record<string, { name: string | null }> = {};
+            ): Record<string, AudienceInfo> => {
+                const result: Record<string, { name: string | null, type: string | null }> = {};
                 if (!entries) return result;
                 for (const entry of entries) {
                     let id: string | undefined;
@@ -717,7 +726,8 @@ export class KlaviyoService {
                         id = (entry as { id?: string }).id;
                     }
                     if (id) {
-                        result[id] = { name: audienceNameMap.get(id) ?? null };
+                        const audience = audienceNameMap.get(id);
+                        result[id] = { name: audience?.name ?? null, type: audience?.type ?? null };
                     }
                 }
                 return result;
@@ -727,10 +737,11 @@ export class KlaviyoService {
                 id: campaign.id,
                 name: attrs.name ?? '',
                 type: 'campaign',
-                channel: campaign.channel ??'',
+                channel: campaign.channel ?? '',
                 send_time: sendDate,
                 status: attrs.status ?? '',
                 archived: attrs.archived ?? false,
+                message_id: campaign?.relationships?.campaignMessages?.data?.[0]?.id,
                 audiences: {
                     included: buildAudienceMap(attrs.audiences?.included),
                     excluded: buildAudienceMap(attrs.audiences?.excluded),
@@ -738,7 +749,6 @@ export class KlaviyoService {
                 statistics: statsById.get(campaign.id) ?? {},
             });
         }
-
         return normalized;
     }
 
@@ -837,11 +847,19 @@ export class KlaviyoService {
             logger.info(`Klaviyo: Found ${audienceIds.size} unique audience IDs to resolve`);
             const audienceNameMap = await this.enrichAudiences(audienceIds);
 
-            const campaigns = this.normalizeCampaigns(rawCampaigns, valuesReport, audienceNameMap,campaignRequestData);
+            const campaigns = this.normalizeCampaigns(rawCampaigns, valuesReport, audienceNameMap, campaignRequestData);
             logger.info(`Klaviyo: Normalized ${campaigns.length} campaigns with metrics`);
             return campaigns;
         } catch (error) {
             logger.error(error, 'Error in KlaviyoService.getCampaignsWithMetrics');
+            await ErrorLogs.insertOne({
+                client_id: requestData?.clientId,
+                connection_id: requestData?.connectionId,
+                network: "klaviyo",
+                start_date: requestData?.startDate,
+                end_date: requestData?.endDate,
+                error: JSON.stringify(error)
+            });
             throw new Error('Error fetching Klaviyo campaigns with metrics');
         }
     }
@@ -869,6 +887,7 @@ export class KlaviyoService {
     }
 
     async fetchKlaviyoRecords(requestData: {
+        privateKey?: string;
         startDate?: string;
         endDate?: string;
         clientId?: string;
@@ -878,6 +897,12 @@ export class KlaviyoService {
         campaigns: NormalizedCampaign[];
         flows: NormalizedFlow[];
     }> {
+
+        if (!requestData?.privateKey) {
+            throw new Error("Klaviyo private key is required");
+        }
+        this.initializeSession(requestData.privateKey as string);
+
         const [campaigns, flows] = await Promise.all([
             this.getCampaignsWithMetrics(requestData),
             this.getFlowsWithMetrics(requestData),
@@ -905,7 +930,7 @@ export class KlaviyoService {
             }
             // logger.info(recordsByDate,'recordsByDate');
             try {
-                await captureToCentralStorage(
+                await this.captureToCentralStorage(
                     recordsByDate,
                     requestData.clientId,
                     requestData.connectionId,
@@ -935,22 +960,25 @@ export class KlaviyoService {
         }
     }
 
-    async getMetrices() {
+    async getMetrices(requestData) {
         try {
+            if (!requestData?.privateKey) {
+             throw new Error("Klaviyo private key is required");
+            }
+            this.initializeSession(requestData.pvtkey as string);
             const metrices = new MetricsApi(this.session);
             const metricesList = await metrices.getMetrics();
             return metricesList?.body?.data;
         } catch (error) {
-            logger.info(error);
-            throw new Error('Error in klaviyo getMetrices API');
+            throw error?.response;
         }
     }
 
-    async getCampaigns(requestData:any) {
+    async getCampaigns(requestData: any) {
         try {
             const startStr = `${requestData?.startDate}T00:00:00`;
-            const endStr   = `${requestData?.endDate}T23:59:59`;
-            const filter   = `greater-or-equal(updated_at,${startStr}),less-or-equal(updated_at,${endStr}),equals(messages.channel,'sms'),any(status,['Sent','Cancelled'])`;
+            const endStr = `${requestData?.endDate}T23:59:59`;
+            const filter = `greater-or-equal(updated_at,${startStr}),less-or-equal(updated_at,${endStr}),equals(messages.channel,'sms'),any(status,['Sent','Cancelled'])`;
             const campaigns = new CampaignsApi(this.session);
             const campaignsList = await campaigns.getCampaigns(filter);
             return campaignsList?.body?.data;
@@ -971,448 +999,172 @@ export class KlaviyoService {
         }
     }
 
-    async getCampaignReport(requestData: CampaignReportRequest) {
-        try {
-            const { startDate, endDate, metricId, timezone = 'UTC' } = requestData;
+    async captureToCentralStorage(records, clientId, connectionId, network) {
+        const bulkOpsByYear: any[] = [];
 
-            const metricsApi = new MetricsApi(this.session);
+        Object.entries(records).forEach(([date, recordsByDate]) => {
 
-            let targetMetricId = metricId;
-            if (!targetMetricId) {
-                const metricsList = await metricsApi.getMetrics();
-                const receivedEmailMetric = metricsList?.body?.data?.find(
-                    (m: { attributes?: { name?: string } }) => m.attributes?.name === 'Received Email'
-                );
-                if (receivedEmailMetric) {
-                    targetMetricId = receivedEmailMetric.id;
-                } else {
-                    throw new Error('Could not find Received Email metric. Please provide a metricId.');
+            const dateObj = new Date(date);
+            dateObj.setUTCHours(0, 0, 0, 0);
+            const year = dateObj.getUTCFullYear();
+
+            if (!bulkOpsByYear[year]) {
+                bulkOpsByYear[year] = [];
+            }
+
+            const setObj: Record<string, unknown> = {};
+            const dataRecord = recordsByDate as Record<string, unknown>;
+            for (const [key, value] of Object.entries(dataRecord)) {
+                if (Array.isArray(value) && value.length > 0) {
+                    setObj[`data.${key}`] = value;
                 }
             }
 
-            const startDateTime = `${startDate}T00:00:00`;
-            const endDateTime = `${endDate}T23:59:59`;
+            if (Object.keys(setObj).length === 0) {
+                return;
+            }
 
-            const metricAggregateQuery: MetricAggregateQuery = {
-                data: {
-                    type: 'metric-aggregate',
-                    attributes: {
-                        metricId: targetMetricId,
-                        measurements: ['count', 'unique', 'sum_value'],
-                        interval: 'day',
-                        pageSize: 500,
-                        by: ['$attributed_message', 'Campaign Name'],
-                        filter: [
-                            `greater-or-equal(datetime,${startDateTime})`,
-                            `less-than(datetime,${endDateTime})`,
-                        ],
-                        timezone: timezone,
+            bulkOpsByYear[year].push({
+                updateOne: {
+                    filter: {
+                        client_id: getMongoDbObjectId(clientId),
+                        connection_id: getMongoDbObjectId(connectionId),
+                        network: network,
+                        date: new Date(date),
                     },
+                    update: {
+                        $setOnInsert: {
+                            client_id: getMongoDbObjectId(clientId),
+                            connection_id: getMongoDbObjectId(connectionId),
+                            network: network,
+                            date: new Date(date),
+                        },
+                        $set: setObj,
+                    },
+                    upsert: true,
                 },
-            };
+            });
+        });
 
-            const response = await metricsApi.queryMetricAggregates(metricAggregateQuery);
-            const rawData = response?.body?.data;
+        // Execute bulkWrite per year
+        for (const [year, bulkOps] of Object.entries(bulkOpsByYear)) {
+            if (!bulkOps.length) continue;
 
-            const dailyRecords = this.transformToDailyAggregates(rawData as MetricAggregateResponseData);
+            const modelName = getCentralStorageModel(`central_storage_${year}`);
+            try {
+                await modelName.bulkWrite(bulkOps, { ordered: false });
+            } catch (err: any) {
+                if (err.mongoose?.validationErrors) {
+                    err.mongoose.validationErrors.forEach((e: any, index: number) => {
+                        logger.error(e.message, "klaviyo storage Error Message:");
+                    });
+                } else {
+                    logger.error(err, "klaviyo storage Error: ");
+                }
+            }
 
-            return dailyRecords;
-        } catch (error) {
-            logger.error(error, 'Error in klaviyo getCampaignReport API');
-            throw new Error('Error in klaviyo getCampaignReport API');
         }
+        return true;
     }
 
-    async getCampaignDailyReport(requestData: CampaignReportRequest): Promise<CampaignDailyMetricsRecord[]> {
+
+    async getDraftCampaignsForCalendar(
+        requestData: { startDate: string; endDate: string },
+        channel: 'email' | 'sms' = 'email',
+        statuses: string[] = ['Draft'],
+        enrichAudiences: boolean = false
+    ): Promise<NormalizedCampaign[]> {
         try {
-            const { startDate, endDate, timezone = 'UTC' } = requestData;
+            logger.info(`Klaviyo: Fetching ${statuses.join(', ')} campaigns for channel: ${channel}`);
 
-            const metricsApi = new MetricsApi(this.session);
-            const metricsList = await metricsApi.getMetrics();
-            const metricsData = metricsList?.body?.data || [];
+            const rawCampaigns = await this.fetchCampaignListByChannel(
+                requestData,
+                channel,
+                statuses
+            );
 
-            const targetMetricNames = [
-                'Received Email',
-                'Opened Email',
-                'Clicked Email',
-                'Bounced Email',
-                'Placed Order',
-            ];
+            logger.info(`Klaviyo: Fetched ${rawCampaigns.length} campaigns`);
 
-            const metricMap: Record<string, string> = {};
-            for (const m of metricsData) {
-                const name = m.attributes?.name;
-                if (name && targetMetricNames.includes(name)) {
-                    metricMap[name] = m.id;
-                }
+            let audienceNameMap = new Map<string, AudienceInfo | null>();
+
+            if (enrichAudiences) {
+                const audienceIds = this.collectAudienceIds(rawCampaigns);
+                logger.info(`Klaviyo: Found ${audienceIds.size} unique audience IDs to resolve`);
+                audienceNameMap = await this.enrichAudiences(audienceIds);
             }
 
-            const startDateTime = `${startDate}T00:00:00`;
-            const endDateTime = `${endDate}T23:59:59`;
+            // Normalize campaigns (without statistics for drafts)
+            const normalized: NormalizedCampaign[] = [];
 
-            const campaignData: Record<
-                string,
-                Record<
-                    string,
-                    {
-                        campaign_id: string;
-                        campaign_name: string;
-                        received: number;
-                        opened: number;
-                        clicked: number;
-                        bounced: number;
-                        placed_order: number;
-                        placed_order_value: number;
-                    }
-                >
-            > = {};
-
-            for (const metricName of targetMetricNames) {
-                const metricId = metricMap[metricName];
-                if (!metricId) continue;
-
-                const metricAggregateQuery: MetricAggregateQuery = {
-                    data: {
-                        type: 'metric-aggregate',
-                        attributes: {
-                            metricId: metricId,
-                            measurements: ['count', 'unique', 'sum_value'],
-                            interval: 'day',
-                            pageSize: 500,
-                            by: ['$attributed_message', 'Campaign Name'],
-                            filter: [
-                                `greater-or-equal(datetime,${startDateTime})`,
-                                `less-than(datetime,${endDateTime})`,
-                            ],
-                            timezone: timezone,
-                        },
-                    },
+            for (const c of rawCampaigns) {
+                const campaign = c as {
+                    id: string;
+                    channel?: string;
+                    attributes?: {
+                        name?: string;
+                        status?: string;
+                        archived?: boolean;
+                        sendTime?: string;
+                        audiences?: {
+                            included?: unknown[];
+                            excluded?: unknown[];
+                        };
+                    };
+                    relationships?: {
+                        campaignMessages?: {
+                            data?: Array<{ id?: string }>;
+                        };
+                    };
                 };
 
-                const response = await metricsApi.queryMetricAggregates(metricAggregateQuery);
-                const rawData = response?.body?.data as MetricAggregateResponseData;
-                const dates = rawData?.attributes?.dates || [];
-                const data = rawData?.attributes?.data || [];
+                const attrs = campaign.attributes ?? {};
 
-                for (const row of data) {
-                    const dimensions = row.dimensions || [];
-                    const campaignId = dimensions[0] || 'unknown';
-                    const campaignName = dimensions[1] || 'Unknown Campaign';
-                    const measurements = row.measurements || {};
-                    const countArr = measurements.count || [];
-                    const uniqueArr = measurements.unique || [];
-                    const sumValueArr = measurements.sum_value || [];
-
-                    for (let i = 0; i < dates.length; i++) {
-                        const dateVal = dates[i];
-                        const dateStr =
-                            typeof dateVal === 'string'
-                                ? dateVal.split('T')[0]
-                                : dateVal instanceof Date
-                                    ? dateVal.toISOString().split('T')[0]
-                                    : String(dateVal).split('T')[0];
-
-                        const key = `${dateStr}|${campaignId}`;
-                        if (!campaignData[key]) {
-                            campaignData[key] = {};
+                const buildAudienceMap = (
+                    entries?: unknown[]
+                ): Record<string, AudienceInfo> => {
+                    const result: Record<string, AudienceInfo> = {};
+                    if (!entries) return result;
+                    for (const entry of entries) {
+                        let id: string | undefined;
+                        if (typeof entry === 'string') {
+                            id = entry;
+                        } else if (entry && typeof entry === 'object') {
+                            id = (entry as { id?: string }).id;
                         }
-                        if (!campaignData[key][campaignId]) {
-                            campaignData[key][campaignId] = {
-                                campaign_id: campaignId,
-                                campaign_name: campaignName,
-                                received: 0,
-                                opened: 0,
-                                clicked: 0,
-                                bounced: 0,
-                                placed_order: 0,
-                                placed_order_value: 0,
+                        if (id) {
+                            const audience = audienceNameMap.get(id);
+                            result[id] = {
+                                name: audience?.name ?? null,
+                                type: audience?.type ?? null,
                             };
                         }
-
-                        const uniqueCount = uniqueArr[i] || 0;
-                        const sumValue = sumValueArr[i] || 0;
-
-                        if (metricName === 'Received Email') {
-                            campaignData[key][campaignId].received += countArr[i] || 0;
-                        } else if (metricName === 'Opened Email') {
-                            campaignData[key][campaignId].opened += uniqueCount;
-                        } else if (metricName === 'Clicked Email') {
-                            campaignData[key][campaignId].clicked += uniqueCount;
-                        } else if (metricName === 'Bounced Email') {
-                            campaignData[key][campaignId].bounced += countArr[i] || 0;
-                        } else if (metricName === 'Placed Order') {
-                            campaignData[key][campaignId].placed_order += countArr[i] || 0;
-                            campaignData[key][campaignId].placed_order_value += sumValue;
-                        }
                     }
-                }
-            }
+                    return result;
+                };
 
-            const records: CampaignDailyMetricsRecord[] = [];
-            for (const key of Object.keys(campaignData)) {
-                const [dateStr] = key.split('|');
-                for (const campaignId of Object.keys(campaignData[key])) {
-                    const data = campaignData[key][campaignId];
-                    const totalRecipients = data.received;
-                    const openRate = totalRecipients > 0 ? (data.opened / totalRecipients) * 100 : 0;
-                    const clickRate = totalRecipients > 0 ? (data.clicked / totalRecipients) * 100 : 0;
-                    const bounceRate = totalRecipients > 0 ? (data.bounced / totalRecipients) * 100 : 0;
-                    const placedOrderRate =
-                        totalRecipients > 0 ? (data.placed_order / totalRecipients) * 100 : 0;
-
-                    if (totalRecipients > 0 || data.placed_order > 0) {
-                        records.push({
-                            date: dateStr,
-                            campaign_id: data.campaign_id,
-                            campaign_name: data.campaign_name,
-                            total_recipients: totalRecipients,
-                            unique_opens: data.opened,
-                            unique_clicks: data.clicked,
-                            open_rate: Math.round(openRate * 100) / 100,
-                            click_rate: Math.round(clickRate * 100) / 100,
-                            placed_order: data.placed_order,
-                            placed_order_value: Math.round(data.placed_order_value * 100) / 100,
-                            placed_order_rate: Math.round(placedOrderRate * 100) / 100,
-                            bounced: data.bounced,
-                            bounce_rate: Math.round(bounceRate * 100) / 100,
-                        });
-                    }
-                }
-            }
-
-            return records.sort((a, b) => {
-                const dateCompare = new Date(a.date).getTime() - new Date(b.date).getTime();
-                if (dateCompare !== 0) return dateCompare;
-                return a.campaign_name.localeCompare(b.campaign_name);
-            });
-        } catch (error) {
-            logger.error(error, 'Error in klaviyo getCampaignDailyReport API');
-            throw new Error('Error in klaviyo getCampaignDailyReport API');
-        }
-    }
-
-    async getCampaignReportMultiMetric(requestData: CampaignReportRequest) {
-        try {
-            const { startDate, endDate, timezone = 'UTC' } = requestData;
-
-            const metricsApi = new MetricsApi(this.session);
-
-            const metricsList = await metricsApi.getMetrics();
-            const metricsData = metricsList?.body?.data || [];
-
-            const targetMetricNames = [
-                'Received Email',
-                'Opened Email',
-                'Clicked Email',
-                'Bounced Email',
-                'Unsubscribed',
-            ];
-
-            const targetMetrics = metricsData.filter(
-                (m: { attributes?: { name?: string } }) =>
-                    targetMetricNames.includes(m.attributes?.name || '')
-            );
-
-            const startDateTime = `${startDate}T00:00:00`;
-            const endDateTime = `${endDate}T23:59:59`;
-
-            const results: Record<
-                string,
-                { date: string; metrics: Record<string, { count: number; unique: number; sum_value: number }> }
-            > = {};
-
-            for (const metric of targetMetrics) {
-                const metricName = metric.attributes?.name || 'unknown';
-                const metricKey = metricName.toLowerCase().replace(/\s+/g, '_');
-
-                const metricAggregateQuery: MetricAggregateQuery = {
-                    data: {
-                        type: 'metric-aggregate',
-                        attributes: {
-                            metricId: metric.id,
-                            measurements: ['count', 'unique', 'sum_value'],
-                            interval: 'day',
-                            pageSize: 500,
-                            by: ['$attributed_message'],
-                            filter: [
-                                `greater-or-equal(datetime,${startDateTime})`,
-                                `less-than(datetime,${endDateTime})`,
-                            ],
-                            timezone: timezone,
-                        },
+                normalized.push({
+                    id: campaign.id,
+                    name: attrs.name ?? '',
+                    type: 'campaign',
+                    channel: campaign.channel ?? channel,
+                    send_time: attrs.sendTime ?? '',
+                    status: attrs.status ?? '',
+                    archived: attrs.archived ?? false,
+                    message_id: campaign.relationships?.campaignMessages?.data?.[0]?.id ?? '',
+                    audiences: {
+                        included: buildAudienceMap(attrs.audiences?.included),
+                        excluded: buildAudienceMap(attrs.audiences?.excluded),
                     },
-                };
-
-                const response = await metricsApi.queryMetricAggregates(metricAggregateQuery);
-                const rawData = response?.body?.data;
-
-                const responseData = rawData as MetricAggregateResponseData;
-                const dates = responseData?.attributes?.dates || [];
-                const data = responseData?.attributes?.data || [];
-
-                for (let i = 0; i < dates.length; i++) {
-                    const dateVal = dates[i];
-                    const dateStr =
-                        typeof dateVal === 'string'
-                            ? dateVal.split('T')[0]
-                            : dateVal instanceof Date
-                                ? dateVal.toISOString().split('T')[0]
-                                : String(dateVal).split('T')[0];
-
-                    if (!results[dateStr]) {
-                        results[dateStr] = {
-                            date: dateStr,
-                            metrics: {},
-                        };
-                    }
-
-                    if (!results[dateStr].metrics[metricKey]) {
-                        results[dateStr].metrics[metricKey] = { count: 0, unique: 0, sum_value: 0 };
-                    }
-                }
-
-                for (const row of data) {
-                    const measurements = row.measurements || {};
-                    const countArr = measurements.count || [];
-                    const uniqueArr = measurements.unique || [];
-                    const sumValueArr = measurements.sum_value || [];
-
-                    for (let i = 0; i < dates.length; i++) {
-                        const dateVal = dates[i];
-                        const dateStr =
-                            typeof dateVal === 'string'
-                                ? dateVal.split('T')[0]
-                                : dateVal instanceof Date
-                                    ? dateVal.toISOString().split('T')[0]
-                                    : String(dateVal).split('T')[0];
-
-                        if (results[dateStr] && results[dateStr].metrics[metricKey]) {
-                            results[dateStr].metrics[metricKey].count += countArr[i] || 0;
-                            results[dateStr].metrics[metricKey].unique += uniqueArr[i] || 0;
-                            results[dateStr].metrics[metricKey].sum_value += sumValueArr[i] || 0;
-                        }
-                    }
-                }
+                    statistics: {}, // Drafts don't have statistics
+                });
             }
 
-            const dailyRecords = Object.values(results).sort(
-                (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
-            );
-
-            return dailyRecords;
+            logger.info(`Klaviyo: Normalized ${normalized.length} campaigns`);
+            return normalized;
         } catch (error) {
-            logger.error(error, 'Error in klaviyo getCampaignReportMultiMetric API');
-            throw new Error('Error in klaviyo getCampaignReportMultiMetric API');
+            logger.error(error, 'Error in KlaviyoService.getDraftCampaignsForCalendar');
+            throw new Error('Error fetching Klaviyo draft campaigns');
         }
-    }
-
-    private transformToCampaignDailyRecords(rawData: MetricAggregateResponseData): CampaignDailyRecord[] {
-        const dates = rawData?.attributes?.dates || [];
-        const data = rawData?.attributes?.data || [];
-
-        if (dates.length === 0 || data.length === 0) {
-            return [];
-        }
-
-        const records: CampaignDailyRecord[] = [];
-
-        for (const row of data) {
-            const dimensions = row.dimensions || [];
-            const campaignId = dimensions[0] || 'unknown';
-            const campaignName = dimensions[1] || 'Unknown Campaign';
-            const measurements = row.measurements || {};
-            const countArr = measurements.count || [];
-            const uniqueArr = measurements.unique || [];
-            const sumValueArr = measurements.sum_value || [];
-
-            for (let i = 0; i < dates.length; i++) {
-                const dateVal = dates[i];
-                const dateStr =
-                    typeof dateVal === 'string'
-                        ? dateVal.split('T')[0]
-                        : dateVal instanceof Date
-                            ? dateVal.toISOString().split('T')[0]
-                            : String(dateVal).split('T')[0];
-
-                const count = countArr[i] || 0;
-                const unique = uniqueArr[i] || 0;
-                const sumValue = sumValueArr[i] || 0;
-
-                if (count > 0 || unique > 0 || sumValue > 0) {
-                    records.push({
-                        date: dateStr,
-                        campaign_id: campaignId,
-                        campaign_name: campaignName,
-                        count: count,
-                        unique: unique,
-                        sum_value: sumValue,
-                    });
-                }
-            }
-        }
-
-        return records.sort((a, b) => {
-            const dateCompare = new Date(a.date).getTime() - new Date(b.date).getTime();
-            if (dateCompare !== 0) return dateCompare;
-            return a.campaign_name.localeCompare(b.campaign_name);
-        });
-    }
-
-    private transformToDailyAggregates(rawData: MetricAggregateResponseData): DailyMetricRecord[] {
-        const dates = rawData?.attributes?.dates || [];
-        const data = rawData?.attributes?.data || [];
-
-        if (dates.length === 0) {
-            return [];
-        }
-
-        const dailyMap: Record<string, DailyMetricRecord> = {};
-
-        for (let i = 0; i < dates.length; i++) {
-            const dateVal = dates[i];
-            const dateStr =
-                typeof dateVal === 'string'
-                    ? dateVal.split('T')[0]
-                    : dateVal instanceof Date
-                        ? dateVal.toISOString().split('T')[0]
-                        : String(dateVal).split('T')[0];
-
-            if (!dailyMap[dateStr]) {
-                dailyMap[dateStr] = {
-                    date: dateStr,
-                    count: 0,
-                    unique: 0,
-                    sum_value: 0,
-                };
-            }
-        }
-
-        for (const row of data) {
-            const measurements = row.measurements || {};
-            const countArr = measurements.count || [];
-            const uniqueArr = measurements.unique || [];
-            const sumValueArr = measurements.sum_value || [];
-
-            for (let i = 0; i < dates.length; i++) {
-                const dateVal = dates[i];
-                const dateStr =
-                    typeof dateVal === 'string'
-                        ? dateVal.split('T')[0]
-                        : dateVal instanceof Date
-                            ? dateVal.toISOString().split('T')[0]
-                            : String(dateVal).split('T')[0];
-
-                if (dailyMap[dateStr]) {
-                    dailyMap[dateStr].count += countArr[i] || 0;
-                    dailyMap[dateStr].unique += uniqueArr[i] || 0;
-                    dailyMap[dateStr].sum_value += sumValueArr[i] || 0;
-                }
-            }
-        }
-
-        return Object.values(dailyMap).sort(
-            (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
-        );
     }
 }
 
