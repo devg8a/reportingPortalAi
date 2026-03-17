@@ -710,19 +710,10 @@ export class KlaviyoService {
         }
 
         const buildAudienceMap = (
-            entries?: unknown[] | Record<string, AudienceInfo>
+            entries?: unknown[]
         ): Record<string, AudienceInfo> => {
             const result: Record<string, { name: string | null, type: string | null }> = {};
             if (!entries) return result;
-
-            // Handle already-normalized audience maps from DB (object with id keys)
-            if (!Array.isArray(entries)) {
-                for (const [id, info] of Object.entries(entries)) {
-                    result[id] = { name: info?.name ?? null, type: info?.type ?? null };
-                }
-                return result;
-            }
-
             for (const entry of entries) {
                 let id: string | undefined;
                 if (typeof entry === 'string') {
@@ -740,19 +731,6 @@ export class KlaviyoService {
 
         const normalized: NormalizedCampaign[] = [];
         for (const c of rawCampaigns) {
-            const raw = c as Record<string, unknown>;
-
-            // Check if this is a DB-sourced campaign (already normalized, flat structure)
-            if (raw.type === 'campaign' && typeof raw.name === 'string' && !raw.attributes) {
-                const dbCampaign = raw as unknown as NormalizedCampaign;
-                normalized.push({
-                    ...dbCampaign,
-                    statistics: statsById.get(dbCampaign.id) ?? dbCampaign.statistics ?? {},
-                });
-                continue;
-            }
-
-            // API-sourced campaign with attributes wrapper
             const campaign = c as {
                 id: string;
                 channel?: string;
@@ -868,108 +846,30 @@ export class KlaviyoService {
     // PUBLIC API — New methods (campaigns + flows + audience)
     // ═══════════════════════════════════════════════════════════
 
-    // ─── DB Lookup for out-of-range campaigns ────────────────
-    // Campaign values report may return campaigns whose send_time is outside
-    // the selected date range. Instead of extending the API date range to 90 days,
-    // we look up those campaigns from DB (central_storage) to save API calls.
-
-    private async lookupCampaignsFromDb(
-        campaignIds: string[],
-        clientId: string,
-        connectionId: string,
-    ): Promise<unknown[]> {
-        if (campaignIds.length === 0) return [];
-
-        const campaignIdSet = new Set(campaignIds);
-        const foundCampaigns: unknown[] = [];
-
-        // Search last 3 months of central storage for these campaign IDs
-        const now = new Date();
-        const threeMonthsAgo = new Date(now);
-        threeMonthsAgo.setUTCMonth(threeMonthsAgo.getUTCMonth() - 3);
-
-        const startYear = threeMonthsAgo.getUTCFullYear();
-        const endYear = now.getUTCFullYear();
-
-        for (let year = startYear; year <= endYear; year++) {
-            const model = getCentralStorageModel(`central_storage_${year}`);
-            const records = await model.find({
-                client_id: getMongoDbObjectId(clientId),
-                connection_id: getMongoDbObjectId(connectionId),
-                network: 'klaviyo',
-                date: {
-                    $gte: threeMonthsAgo,
-                    $lte: now,
-                },
-            }).select('data.campaigns').lean();
-
-            for (const record of records) {
-                const campaigns = (record as { data?: { campaigns?: unknown[] } })?.data?.campaigns ?? [];
-                for (const campaign of campaigns) {
-                    const c = campaign as { id?: string };
-                    if (c.id && campaignIdSet.has(c.id)) {
-                        foundCampaigns.push(campaign);
-                        campaignIdSet.delete(c.id);
-                    }
-                }
-                if (campaignIdSet.size === 0) break;
-            }
-            if (campaignIdSet.size === 0) break;
-        }
-
-        if (campaignIdSet.size > 0) {
-            logger.warn(`Klaviyo: ${campaignIdSet.size} campaign(s) not found in DB: ${Array.from(campaignIdSet).join(', ')}`);
-        }
-
-        return foundCampaigns;
-    }
-
     async getCampaignsWithMetrics(requestData: any): Promise<NormalizedCampaign[]> {
         try {
-            // Fetch campaigns from API only for the selected date range
+            // Use last 3 months from the given date range for the campaigns API
+            // to capture campaigns whose send_time is before the selected range
+            // but still appear in the values report
             logger.info('Klaviyo: Fetching campaign list...');
-            const rawCampaigns = await this.fetchCampaignList(requestData);
-            logger.info(`Klaviyo: Fetched ${rawCampaigns.length} campaigns from API`);
+            const campaignRequestData = {
+                ...requestData,
+                startDate: this.get90DaysAgo(requestData?.startDate),
+            };
+            const rawCampaigns = await this.fetchCampaignList(campaignRequestData);
+            logger.info(`Klaviyo: Fetched ${rawCampaigns.length} campaigns`);
 
+            // Values report uses the original (given) date range
             logger.info('Klaviyo: Fetching campaign values report...');
             const valuesReport = await this.fetchCampaignValuesReport(requestData);
             logger.info(`Klaviyo: Fetched ${valuesReport.length} campaign value entries`);
 
-            // Identify campaign IDs in values report that are missing from the API response
-            const apiCampaignIds = new Set(
-                rawCampaigns.map((c) => (c as { id?: string })?.id).filter(Boolean)
-            );
-            const reportCampaignIds = valuesReport
-                .map((entry) => {
-                    const e = entry as { groupings?: { campaign_id?: string } };
-                    return e.groupings?.campaign_id;
-                })
-                .filter((id): id is string => !!id);
-
-            const missingCampaignIds = reportCampaignIds.filter((id) => !apiCampaignIds.has(id));
-            const uniqueMissingIds = [...new Set(missingCampaignIds)];
-
-            // Look up missing campaigns from DB instead of extending API date range
-            let dbCampaigns: unknown[] = [];
-            if (uniqueMissingIds.length > 0 && requestData?.clientId && requestData?.connectionId) {
-                logger.info(`Klaviyo: ${uniqueMissingIds.length} campaign(s) in values report not found via API, looking up from DB...`);
-                dbCampaigns = await this.lookupCampaignsFromDb(
-                    uniqueMissingIds,
-                    requestData.clientId,
-                    requestData.connectionId,
-                );
-                logger.info(`Klaviyo: Found ${dbCampaigns.length} campaign(s) from DB`);
-            }
-
-            // Merge API campaigns with DB-sourced campaigns
-            const allCampaigns = [...rawCampaigns, ...dbCampaigns];
-
             logger.info('Klaviyo: Enriching audience names...');
-            const audienceIds = this.collectAudienceIds(allCampaigns);
+            const audienceIds = this.collectAudienceIds(rawCampaigns);
             logger.info(`Klaviyo: Found ${audienceIds.size} unique audience IDs to resolve`);
             const audienceNameMap = await this.enrichAudiences(audienceIds);
 
-            const campaigns = this.normalizeCampaigns(allCampaigns, valuesReport, audienceNameMap, requestData);
+            const campaigns = this.normalizeCampaigns(rawCampaigns, valuesReport, audienceNameMap, requestData);
             logger.info(`Klaviyo: Normalized ${campaigns.length} campaigns with metrics`);
             return campaigns;
         } catch (error) {
