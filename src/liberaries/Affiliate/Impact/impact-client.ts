@@ -9,13 +9,14 @@ export async function triggerApi(url: string, authToken: string) {
           Authorization: `Basic ${authToken}`, 
       },
     });
-    console.log('impact triggerApi==> ',response);
+    // console.log('impact triggerApi==> ',response);
     return {
       headers : response?.headers,
       status  : response?.status,
       data    : response?.data,
     };
   }catch(error){
-    console.log('API call error==>',error);
+    // console.log('impact triggerApi Error==> ',error);
+    throw error?.response?.data;
   }
 }

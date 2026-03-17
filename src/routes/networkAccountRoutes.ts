@@ -4,7 +4,25 @@ import {
   getNetworkAccounts,
   cronSyncAllNetworkAccounts,
   getNetworkAccountById,
-  selectNetworkAccount
+  selectNetworkAccount,
+  connectShopifyAccount,
+  deleteShopifyFilter,
+  connectKlaviyoAccount,
+  deleteKlaviyoFilter,
+  connectAvantlinkAccount,
+  connectAwinAccount,
+  deleteAwinAccount,
+  connectImpactAccount,
+  connectCjAccount,
+  deleteImpactAccount,
+  connectLevantaAccount,
+  connectRakutenAccount,
+  deleteCjAccount,
+  deleteRakutenAccount,
+  updateAffiliateAccountStatus,
+  deleteNetworkAccount,
+  connectPepperjamAccount,
+  connectRefersionAccount
 } from '../controllers/networkAccountController';
 
 const router = express.Router();
@@ -18,13 +36,13 @@ router.get('/network-accounts', getNetworkAccounts);
 // Get specific network account
 router.get('/network-accounts/:accountId', getNetworkAccountById);
 
-router.post('/select/:clientId', selectNetworkAccount);
+router.post('/network-accounts/:clientId', selectNetworkAccount);
 
 // Manual trigger for cron job
-router.post('/network-accounts/cron/sync-all',  async (req, res) => {
+router.post('/network-accounts/cron/sync-all', async (req, res) => {
   try {
     const result = await cronSyncAllNetworkAccounts();
-    
+
     return res.status(200).json({
       status_code: 200,
       success: result.success,
@@ -41,5 +59,23 @@ router.post('/network-accounts/cron/sync-all',  async (req, res) => {
     });
   }
 });
+router.post('/connect-shopify/:clientId', connectShopifyAccount);
+router.delete('/shopify-filter/:clientId', deleteShopifyFilter);
+router.post('/connect-klaviyo/:clientId', connectKlaviyoAccount);
+router.delete('/klaviyo-filter/:clientId', deleteKlaviyoFilter);
+router.post('/connect-avantlink/:clientId', connectAvantlinkAccount);
+router.post('/connect-awin/:clientId', connectAwinAccount);
+router.delete('/awin-account/:clientId/:connectionId', deleteAwinAccount);
+router.post('/connect-impact/:clientId', connectImpactAccount);
+router.delete('/impact-account/:clientId/:connectionId', deleteImpactAccount);
+router.post('/connect-cj/:clientId', connectCjAccount);
+router.post('/connect-levanta/:clientId', connectLevantaAccount);
+router.post('/connect-rakuten/:clientId', connectRakutenAccount);
+router.post('/connect-pepperjam/:clientId', connectPepperjamAccount);
+router.post('/connect-refersion/:clientId', connectRefersionAccount);
+router.delete('/client/:clientId/cj/:connectionId', deleteCjAccount);
+router.delete('/client/:clientId/rakuten/:connectionId', deleteRakutenAccount);
+router.post("/affiliate-account/status", updateAffiliateAccountStatus);
+router.post("/delete-connection",deleteNetworkAccount);
 
 export default router;

@@ -1,60 +1,75 @@
 import express from 'express';
-import { body } from 'express-validator';
 import multer from 'multer';
 import {
   createClient,
-  getClients,
   getClientById,
   updateClient,
   deleteClient,
   getChangeLogs,
   resetPasswordAndSendLogin,
   deleteContact,
+  getConnectionsByClientId,
+  getClientAccountHandlers,
+  deleteConnectionById,
+  fetchClients,
+  checkContactEmail,
+  bulkDisconnectNetwork,
+  fetchClientsall
 } from '../controllers/clientController';
 import { authMiddleware } from '../middleware/authMiddleware';
-const storage = multer.memoryStorage(); 
+const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 const router = express.Router();
 
-// Get all clients
-router.get('/list',
-  authMiddleware,
-   getClients);
+// ✅ LIST ROUTES
+router.get('/list-all', fetchClientsall);
+router.get('/list', fetchClients);
 
-// Get client by ID
-router.get('/:clientId',
-  authMiddleware, 
-  getClientById);
+// ✅ OTHER STATIC ROUTES
+router.get('/check-email/:email', checkContactEmail);
+router.post('/bulk-disconnect', authMiddleware, bulkDisconnectNetwork);
 
-// Create new client (complete with all collections)
-router.post(
-  '/',
-  // authMiddleware,
-  upload.single('profile_pic'),
-  createClient
-);
+// ✅ NESTED ROUTES
+router.get('/connections/:clientId', getConnectionsByClientId);
+router.get('/connections/:clientId/:network', getConnectionsByClientId);
 
-// Update client details
-router.put('/:clientId', 
-  // authMiddleware,
-  upload.single('profile_pic'), updateClient);
+router.get('/logs/change-logs/:clientId', getChangeLogs);
+router.get('/account-handlers/:clientId', getClientAccountHandlers);
 
-// Reset password and send login info
-router.post('/contacts/:contactId/reset-password'
-  // ,authMiddleware
-, resetPasswordAndSendLogin);
+// ✅ CONTACT ROUTES
+router.post('/contacts/:contactId/reset-password', authMiddleware, resetPasswordAndSendLogin);
+router.delete('/contacts/:contactId', deleteContact);
+router.delete('/connections/:clientId/:connectionId', deleteConnectionById);
 
-// Delete client (Temporary delete)
-router.delete('/:clientId'
-  // ,authMiddleware
-  , deleteClient);
+// ✅ CRUD ROUTES
+router.post('/', authMiddleware, upload.single('profile_pic'), createClient);
+router.put('/:clientId', authMiddleware, upload.single('profile_pic'), updateClient);
+router.delete('/:clientId', authMiddleware, deleteClient);
 
-// Get change logs by date
-router.get('/logs/change-logs', getChangeLogs);
+// 🔥 ALWAYS KEEP THIS LAST
+router.get('/:clientId', authMiddleware, getClientById);
 
-// Delete contact
-router.delete('/contacts/:contactId'
-  // ,authMiddleware
-  , deleteContact);
+// In your backend routes
+// router.get('/check-email/:email', async (req, res) => {
+//   try {
+//     const { email } = req.params;
+
+//     const existingContact = await ClientContacts.findOne({
+//       email: email,
+//       is_main_contact: true
+//     });
+
+//     return res.status(200).json({
+//       success: true,
+//       exists: !!existingContact
+//     });
+//   } catch (error) {
+//     console.error('Error checking email:', error);
+//     return res.status(500).json({
+//       success: false,
+//       message: 'Internal server error'
+//     });
+//   }
+// });
 
 export default router;

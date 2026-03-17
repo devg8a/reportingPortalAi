@@ -7,10 +7,6 @@ const quickConfigurationSchema = new mongoose.Schema({
   last_name: {
     type: String,
   },
-  status: {
-    type: String,
-    default: 'active'
-  },
   display_name: {
     type: String,
   },
@@ -41,56 +37,27 @@ const quickConfigurationSchema = new mongoose.Schema({
   country: {
     type: String,
   },
-  payment: {
+  payment: [{
     type: String,
-  }
+  }]
 }, {
   _id: false,
   versionKey: false
 });
 
-const shopifyFilterSchema = new mongoose.Schema({
-  field: {
-    type: String,
-  },
-  operator: {
-    type: String,
-  },
-  value: {
-    type: String,
-  }
-}, {
-  _id: false
-});
-
 const performanceTrackingSchema = new mongoose.Schema({
-  adword: {
-    type: Boolean,
-    default: true,
+  networks: {
+    type: Map,
+    of: Boolean,
+    default: {}
   },
-  meta: {
-    type: Boolean,
-    default: true,
-  }
-}, {
-  _id: false
-});
+},
+  {
+    _id: false
 
-const shopifyRevenueSettingsSchema = new mongoose.Schema({
-  account_summary: {
-    type: String,
-    default: "G-D-S-T",
-  },
-  performance_tracker: {
-    type: String,
-    default: "G-D-S",
-  }
-}, {
-  _id: false
-});
+  });
 
 const settingSchema = new mongoose.Schema({
-  shopify_filter: [shopifyFilterSchema],
   combined_bench_mark: {
     type: Boolean,
     default: false,
@@ -103,10 +70,6 @@ const settingSchema = new mongoose.Schema({
     type: performanceTrackingSchema,
     default: () => ({})
   },
-  shopify_revenue_settings: {
-    type: shopifyRevenueSettingsSchema,
-    default: () => ({})
-  }
 }, {
   _id: false
 });
@@ -117,11 +80,11 @@ const clientDetailsSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
-  type: {
+  type: [{
     type: String,
     enum: ['paid_media', 'affiliate', 'aeo'],
     required: true
-  },
+  }],
   is_main_account: {
     type: Boolean,
     default: false
@@ -143,7 +106,6 @@ const clientDetailsSchema = new mongoose.Schema({
   },
   start_date: {
     type: Date,
-    required: true
   },
   termination_date: {
     type: Date
@@ -154,7 +116,7 @@ const clientDetailsSchema = new mongoose.Schema({
   profile_pic: {
     type: String
   },
-  roles_id: {
+  role_id: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Role'
   },
@@ -171,4 +133,5 @@ const clientDetailsSchema = new mongoose.Schema({
   versionKey: false,
 });
 
+clientDetailsSchema.index({ status: 1, name: 1, type: 1 });
 export default mongoose.model('client_details', clientDetailsSchema);

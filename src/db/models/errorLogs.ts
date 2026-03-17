@@ -3,7 +3,6 @@ import mongoose from 'mongoose';
 const errorLogsSchema = new mongoose.Schema({
 	client_id     : { type: mongoose.Schema.Types.ObjectId, ref:'Store', required: [true, "Client ID is required."]},
 	connection_id : { type: mongoose.Schema.Types.ObjectId },
-	account_id    : { type: mongoose.Schema.Types.ObjectId },
     network       : { type: String },
     start_date    : { type: Date },
     end_date      : { type: Date },

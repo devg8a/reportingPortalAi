@@ -152,6 +152,7 @@ export const getAllClients = async (req, res) => {
 // Get client by ID
 export const getClientById = async (req, res) => {
   try {
+    console.log("icoconsnnnnnnn")
     const { clientId } = req.params;
 
     const client = await Client.findById(clientId)

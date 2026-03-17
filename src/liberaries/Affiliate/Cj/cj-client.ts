@@ -41,14 +41,22 @@ export async function triggerApi(url,data) {
         query: query, 
       },
     });
-    // console.log('Cj triggerApi==> ',response);
-    return {
-      headers : response?.headers,
-      status  : response?.status,
-      data    : response?.data?.data?.advertiserCommissions?.records,
-    };
+    
+    if(response?.data?.errors){
+      return {
+        headers : response?.headers,
+        status  : 422,
+        data    : response?.data?.errors,
+      };
+    }else{
+      return {
+        headers : response?.headers,
+        status  : response?.status,
+        data    : response?.data?.data?.advertiserCommissions?.records,
+      };
+    }
   }catch(error){
-    console.log('Cj API call error==>',error);
+    // console.log('Cj API call error==>',error);
     throw error;
   }
 }

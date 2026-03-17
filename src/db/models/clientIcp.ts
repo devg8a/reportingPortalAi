@@ -6,89 +6,27 @@ const clientIcpSchema = new mongoose.Schema({
         ref: 'client_details',
         default: null
     },
-    monday_id: {
-        type: String,
-        required: true
-    },
-    name: {
-        type: String,
-        required: true
-    },
     category: {
         type: String,
         default: 'null'
     },
-    type: {
-        type: String,
-        default: 'affiliate'
-    },
-    start_date: {
-        type: Date,
-        required: true
-    },
-    termination_date: {
-        type: Date,
-        default: null
-    },
-    website: {
-        type: String
-    },
-    starter_professional: {
-        type: String,
-        default: null
-    },
-    lead_account_manager: {
-        type: String
-    },
-    account_manager: {
-        type: String
-    },
-    out_reach_specialist: {
-        type: String,
-        default: null
-    },
-    design_lead: {
-        type: String
-    },
-    paid_social_lead: {
-        type: String
-    },
-    assoc_paid_social_lead: {
-        type: String
-    },
-    paid_search_lead: {
-        type: String
-    },
-    assoc_paid_search_lead: {
-        type: String
-    },
-    email_lead: {
-        type: String
-    },
-    assoc_email_lead: {
-        type: String
-    },
     access: {
         type: String,
         default: null
-    },
+    },//stores paid media network names
     affiliate_network: {
         type: String,
         default: null
-    },
+    },//stores affiliate network names
+    multiple_networks :{
+        type: String,
+        default: null
+    }, //stores multiple networks
     program_id: {
         type: String,
         default: null
     },
     sign_up_link: {
-        type: String,
-        default: null
-    },
-    base_line_cpa: {
-        type: String,
-        default: null
-    },
-    editorial_cpa: {
         type: String,
         default: null
     },
@@ -129,8 +67,40 @@ const clientIcpSchema = new mongoose.Schema({
     contract_mrr: {
         type: Number
     },
-    geo: {
+    reason: {
         type: String,
+        default: null
+    },
+    company_size_in_revenue: {
+        type: String,
+        default: null
+    },
+    employee_count: {
+        type: String,
+        default: null
+    },
+    b2B_or_b2C: {
+        type: String,
+        default: null
+    },
+    app_services_retail: {
+        type: String,
+        default: null
+    },
+    primary_region: {
+        type: String,
+        default: null
+    },
+    organic_traffic_before_we_start_with_them: {
+        type: String,
+        default: null
+    },
+    before_start_with_them:{
+        type:String,
+        default: null
+    },
+    at_time_of_loss:{
+        type:String,
         default: null
     },
     total_management_fee_invoiced_to_date: {
@@ -148,13 +118,6 @@ const clientIcpSchema = new mongoose.Schema({
     total_commission_fee_paid_to_date: {
         type: Number,
         default: 0
-    },
-    sub_items: [{
-        type: Object
-    }],
-    reason: {
-        type: String,
-        default: null
     },
 },{
     timestamps: true,

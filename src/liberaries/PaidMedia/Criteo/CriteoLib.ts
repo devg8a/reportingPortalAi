@@ -2,8 +2,6 @@ import Criteo_API from "criteo-api";
 import logger from '../../../utils/logger';
 import ErrorLogs from "../../../db/models/errorLogs";
 import { buildDaywiseMetrics } from "./criteo-utils";
-import { getCentralStorageModel } from "../../../db/schema/dynamic-central-model";
-import { getMongoDbObjectId } from "../../../helper/helper";
 import { captureToCentralStorage } from "../../../db/schema/capture-central-storage";
 
 /**
@@ -39,26 +37,30 @@ export class CriteoService {
                 'format': 'json',
                 'dimensions': ['Day'],
                 'metrics': [
+                    'Displays',
                     'Clicks',
                     "AdvertiserCost",
                     "RevenueGeneratedAllPc30d",
+                    "SalesPc30d"
                 ],
                 'currency': 'USD'
             };
             const statReport = await this.criteo.getStatsReport(query);
+            // console.log(statReport, "statReport")
             const response = buildDaywiseMetrics(statReport, requestData?.granularity);
             captureToCentralStorage(response, requestData.clientId, requestData.connectionId, "criteo");
             return response;
         } catch (error) {
             await ErrorLogs.insertOne({
-                client_id  : requestData?.clientId,
-                account_id : requestData?.accountId,
-                network    : 'criteo',
-                start_date : requestData?.startDate,
-                end_date   : requestData?.endDate,
-                error      : JSON.stringify(error)
+                client_id: requestData?.clientId,
+                connection_id: requestData?.connectionId,
+                network: 'criteo',
+                start_date: requestData?.startDate,
+                end_date: requestData?.endDate,
+                error: JSON.stringify(error)
             });
             logger.error(error, 'Criteo Report Error: ');
+            throw error;
         }
     }
 

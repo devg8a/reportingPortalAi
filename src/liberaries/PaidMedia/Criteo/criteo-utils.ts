@@ -5,12 +5,14 @@ export function buildDaywiseMetrics(rawDataList: { Rows?: any[] }, granularity: 
     const date = data?.Day;
     if (!date) return record;
     record[date] = {
-        date,
-        clicks                   : Number(data?.Clicks ?? 0),
-        advertiserCost           : to2Decimal(data?.AdvertiserCost ?? 0),
-        revenueGeneratedAllPc30d : to2Decimal(data?.RevenueGeneratedAllPc30d ?? 0),
-        spend                     : to2Decimal(data?.AdvertiserCost ?? 0),
-        revenue                   : to2Decimal(data?.RevenueGeneratedAllPc30d ?? 0),
+      date,
+      clicks: Number(data?.Clicks ?? 0),
+      advertiserCost: to2Decimal(data?.AdvertiserCost ?? 0),
+      revenueGeneratedAllPc30d: to2Decimal(data?.RevenueGeneratedAllPc30d ?? 0),
+      spend: to2Decimal(data?.AdvertiserCost ?? 0),
+      revenue: to2Decimal(data?.RevenueGeneratedAllPc30d ?? 0),
+      impressions: Number(data?.Displays ?? 0),
+      orders: to2Decimal(data?.SalesPc30d ?? 0),
     };
 
     return record;
@@ -23,15 +25,16 @@ export function buildDaywiseMetrics(rawDataList: { Rows?: any[] }, granularity: 
       for (let hour = 0; hour < 24; hour++) {
         const hourFormatted = String(hour).padStart(2, '0') + ':00';
         const dateKey = `${date} ${hourFormatted}`;
-        
+
         hourlyData[dateKey] = {
           date: dateKey,
           hour: `${hourFormatted}:00 - ${hourFormatted}:59:59`,
-          clicks                   : Number(Math.round((data?.clicks ?? 0) / 24)),
-          advertiserCost           : to2Decimal((data?.advertiserCost ?? 0) / 24),
-          revenueGeneratedAllPc30d : to2Decimal((data?.revenueGeneratedAllPc30d ?? 0) / 24),
-          spend                     : to2Decimal((data?.spend ?? 0) / 24),
-          revenue                   : to2Decimal((data?.revenue ?? 0) / 24),
+          clicks: Number(Math.round((data?.clicks ?? 0) / 24)),
+          advertiserCost: to2Decimal((data?.advertiserCost ?? 0) / 24),
+          revenueGeneratedAllPc30d: to2Decimal((data?.revenueGeneratedAllPc30d ?? 0) / 24),
+          spend: to2Decimal((data?.spend ?? 0) / 24),
+          revenue: to2Decimal((data?.revenue ?? 0) / 24),
+          // impressions: Number(Math.round((data?.impressions ?? 0) / 24)),
         };
       }
     });

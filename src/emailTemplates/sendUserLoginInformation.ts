@@ -17,8 +17,8 @@ export const sendUserLoginInfo = (email: string, password: string) => {
               <tr>
                 <td style="padding: 8px 0; width: 120px;"><strong>Portal URL:</strong></td>
                 <td style="padding: 8px 0;">
-                  <a href="https://reports.group8a.com" style="color: #2196F3; text-decoration: none;">
-                    https://reports.group8a.com
+                  <a href="https://v2reports.group8a.com" style="color: #2196F3; text-decoration: none;">
+                    https://v2reports.group8a.com
                   </a>
                 </td>
               </tr>
@@ -35,7 +35,7 @@ export const sendUserLoginInfo = (email: string, password: string) => {
 
           <!-- Login Button -->
           <div style="text-align: center; margin: 25px 0;">
-            <a href="https://reports.group8a.com" 
+            <a href="https://v2reports.group8a.com" 
                style="background-color: #4CAF50; color: white; padding: 14px 35px; 
                       text-decoration: none; border-radius: 5px; font-weight: bold; 
                       display: inline-block; font-size: 16px;">

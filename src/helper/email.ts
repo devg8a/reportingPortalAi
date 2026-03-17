@@ -9,6 +9,11 @@ const createTransporter = () => {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
     },
+    ...(process.env.NODE_ENV === "local" && {
+      tls: {
+        rejectUnauthorized: false,
+      },
+    }),
   });
 };
 

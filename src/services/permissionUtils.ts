@@ -3,18 +3,24 @@ import Role from '../db/models/role.js';
 import ClientContacts from '../db/models/clientContacts.js';
 import ClientDetails from '../db/models/clientDetails.js';
 
-export const getFinalPermissions = async (userId) => {
+export const getFinalPermissions = async (userId, entity_type = "user", role_id = null) => {
   try {
-    const user = await User.findById(userId);
+    console.log(role_id, "role_id", userId, "userId", entity_type, "entity_type")
+    let user;
+    if (entity_type == "user") {
+      user = await User.findById(userId);
+    } else {
+      user = await ClientContacts.findById(userId);
+    }
     if (!user) {
       return {};
     }
 
-    const role = await Role.findById(user.role_id);
+    const role = await Role.findById(role_id || user.role_id);
     const userOverrides = user.overrides || new Map();
-    
+
     const finalPermissions = {};
-    
+
     if (role && role.permissions) {
       const rolePermissions = role.permissions || new Map();
       for (const [moduleName, rolePermission] of rolePermissions.entries()) {
@@ -26,11 +32,11 @@ export const getFinalPermissions = async (userId) => {
         };
       }
     }
-    
+
     for (const [moduleName, override] of userOverrides.entries()) {
       if (!finalPermissions[moduleName]) {
-        const newPermission : any = {};
-        
+        const newPermission: any = {};
+
         if (typeof override.access !== 'undefined') {
           newPermission.access = override.access;
         }
@@ -43,7 +49,7 @@ export const getFinalPermissions = async (userId) => {
         if (typeof override.refresh !== 'undefined') {
           newPermission.refresh = override.refresh;
         }
-        
+
         if (Object.keys(newPermission).length > 0) {
           finalPermissions[moduleName] = newPermission;
         }
@@ -62,10 +68,10 @@ export const getFinalPermissions = async (userId) => {
         }
       }
     }
-    
+
     return finalPermissions;
   } catch (error) {
-      console.error('Error calculating final permissions:', error);
+    console.error('Error calculating final permissions:', error);
     return {};
   }
 };
@@ -79,44 +85,44 @@ export const syncUserOverrides = async (userId, originalRolePermissions) => {
 
     const userOverrides = user.overrides || new Map();
     const updatedOverrides = new Map();
-    
+
     const role = await Role.findById(user.role_id);
     const currentRolePermissions = role?.permissions || new Map();
-    
+
     for (const [moduleName, override] of userOverrides.entries()) {
       const originalRolePerm = originalRolePermissions?.get(moduleName);
       const currentRolePerm = currentRolePermissions.get(moduleName);
-      
+
       if (!currentRolePerm) {
         continue;
       }
-      
-      const keptOverride : any = {};
-      
+
+      const keptOverride: any = {};
+
       if (typeof override.access !== 'undefined') {
         keptOverride.access = override.access;
       }
-      
+
       if (override.actions && override.actions.length > 0) {
         keptOverride.actions = override.actions;
       }
-      
+
       if (override.client_scope) {
         keptOverride.client_scope = override.client_scope;
       }
-      
+
       if (typeof override.refresh !== 'undefined') {
         keptOverride.refresh = override.refresh;
       }
-      
+
       if (Object.keys(keptOverride).length > 0) {
         updatedOverrides.set(moduleName, keptOverride);
       }
     }
-    
+
     user.overrides = updatedOverrides;
     await user.save();
-    
+
     return user.overrides;
   } catch (error) {
     console.error('Error syncing overrides:', error);
@@ -132,20 +138,20 @@ export const getClientPermissions = async (clientContactId) => {
     }
 
     const clientDetails = await ClientDetails.findById(clientContact.client_id);
-    if (!clientDetails || !clientDetails.roles_id) {
+    if (!clientDetails || !clientDetails.role_id) {
       return {};
     }
 
-    const role = await Role.findById(clientDetails.roles_id);
+    const role = await Role.findById(clientDetails.role_id);
     if (!role) {
       return {};
     }
 
     const rolePermissions = role.permissions || new Map();
     const clientContactOverrides = clientContact.overrides || new Map();
-    
+
     const finalPermissions = {};
-    
+
     for (const [moduleName, rolePermission] of rolePermissions.entries()) {
       finalPermissions[moduleName] = {
         access: rolePermission.access || false,
@@ -154,7 +160,7 @@ export const getClientPermissions = async (clientContactId) => {
         refresh: rolePermission.refresh || false
       };
     }
-    
+
     for (const [moduleName, override] of clientContactOverrides.entries()) {
       if (finalPermissions[moduleName]) {
         if (typeof override.access !== 'undefined') {
@@ -171,7 +177,7 @@ export const getClientPermissions = async (clientContactId) => {
         }
       }
     }
-    
+
     return finalPermissions;
   } catch (error) {
     console.error('Error calculating client final permissions:', error);

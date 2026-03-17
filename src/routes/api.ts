@@ -1,12 +1,14 @@
 import express from 'express';
 import * as testingController from "../controllers/testingController";
+import * as healthController from "../controllers/healthController";
+import { divergenceReport, getChartData } from "../controllers/divergenceController";
 import { cache } from '../middleware/cacheMiddleware';
 import { authMiddleware } from "../middleware/authMiddleware"
 
 const router = express.Router();
 
-router.post('/affiliate-netwotk-testing', cache(req => `store:${req.body.client_id}`, 300), testingController.affiliateNetworkTestingApi);
-router.post('/integration-store', testingController.intgrationStore);
+// router.post('/affiliate-netwotk-testing', cache(req => `store:${req.body.client_id}`, 300), testingController.affiliateNetworkTestingApi);
+router.post('/affiliate-netwotk-testing', testingController.affiliateNetworkTestingApi);
 router.post('/create-store', testingController.createStore);
 router.get('/fetch-active-client-list', testingController.fetchActiveClientList);
 router.post('/impact-jobs-completion-webhook', testingController.impactJobCompletionWebhook);
@@ -31,9 +33,17 @@ router.post('/fetch-meta-new-ads', testingController.metaNewAds);
 router.post('/test-refresh-token', testingController.testRefreshToken);
 router.post('/klaviyo-test', testingController.klaviyoTest);
 router.post('/fetch-shopify-performance-report', testingController.shopifyPerformanceReport);
-router.post('/klaviyo-campaign-report', testingController.klaviyoCampaignReport);
-router.post('/klaviyo-campaign-report-multi-metric', testingController.klaviyoCampaignReportMultiMetric);
-router.post('/klaviyo-campaign-daily-report', testingController.klaviyoCampaignDailyReport);
-router.post('/klaviyo-storage', testingController.klaviyoStorage);
+router.get('/all-api-health', healthController.allApiHealth);
+router.post('/get-performance-revenue', testingController.getPerformanceRevenue);
+router.get('/testing-shopify-revenue', testingController.testingShopifyRevenueApi);
+router.get('/fetch-schedular-logs', testingController.fetchSchedularLogs);
+router.post('/test-email-notification', testingController.testEmailNotification);
+router.get('/fetch-redis-logs', testingController.printAllRedisData);
+router.get('/hubspot-test', testingController.hubspotTest);
+
+
+router.get('/monday-test', testingController.mondayTest);
+
+
 
 export default router

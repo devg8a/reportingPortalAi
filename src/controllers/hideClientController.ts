@@ -1,65 +1,138 @@
 import { Request, Response } from 'express';
 import HideClient from '../db/models/hideClient';
-import User from '../db/models/user';
 import logger from '../utils/logger';
+import { fetchAllActiveClients } from '../helper/utilityHelper';
 
 
-export const hideClient = async (req: Request, res: Response) => {
+
+export const fetchVisibleClients = async (
+    userId: string,
+    moduleKey: string,
+    returnAll: boolean = false
+) => {
     try {
-        const { module_key, client_ids, hidden_by, reason } = req.body;
+        // 1️⃣ Get clients based on permission
+        const clients = await fetchAllActiveClients(userId, moduleKey);
 
-        // Validate module_key
-        if (!module_key) {
-            return res.status(400).json({
-                status_code: 400,
-                success: false,
-                message: 'module_key is required'
-            });
+        if (!clients.length) return [];
+
+        // 2️⃣ Get hidden clients for this module (User Specific)
+        const hiddenEntry = await HideClient.findOne({
+            module_key: moduleKey,
+            user_id: userId
+        })
+            .select('client_ids')
+            .lean();
+
+        const hiddenIds = hiddenEntry?.client_ids?.map(id => id.toString()) || [];
+
+        // 3️⃣ Return all with status or filter
+        if (returnAll) {
+            return clients.map(client => ({
+                ...client,
+                visible: !hiddenIds.includes(client._id.toString())
+            }));
         }
 
-        // Validate client_ids
-        if (!client_ids || !Array.isArray(client_ids) || client_ids.length === 0) {
-            return res.status(400).json({
-                status_code: 400,
-                success: false,
-                message: 'client_ids array is required and must not be empty'
-            });
-        }
+        // Default: Filter out hidden clients
+        const visibleClients = clients.filter(
+            client => !hiddenIds.includes(client._id.toString())
+        );
 
-        // Validate hidden_by (user ID)
-        if (!hidden_by) {
-            return res.status(400).json({
-                status_code: 400,
-                success: false,
-                message: 'hidden_by (user ID) is required'
-            });
-        }
-
-        // Create hide client entry
-        const hideClientEntry = await HideClient.create({
-            module_key,
-            client_ids,
-            hidden_by,
-            reason: reason || null
-        });
-
-        res.status(200).json({
-            status_code: 200,
-            success: true,
-            message: 'Clients hidden successfully',
-            data: hideClientEntry
-        });
+        return visibleClients;
 
     } catch (error) {
-        logger.error(error, 'Error in hide client:');
-        res.status(500).json({
-            status_code: 500,
+        console.error('Error fetching visible clients:', error);
+        throw error;
+    }
+};
+
+
+export const getVisibleClients = async (req: Request, res: Response) => {
+    try {
+        const userId = (req as any).user?._id; // from auth middleware
+        const { module_key = 'account_summary' } = req.query;
+
+        if (!userId) {
+            return res.status(400).json({
+                success: false,
+                message: 'User ID missing'
+            });
+        }
+
+        // Fetch ALL clients with visible status for the UI dropdown
+        const clients = await fetchVisibleClients(
+            userId,
+            module_key as string,
+            true // returnAll
+        );
+
+        return res.status(200).json({
+            success: true,
+            data: clients
+        });
+
+    } catch (error: any) {
+        return res.status(500).json({
             success: false,
-            message: 'Error in hiding clients',
+            message: 'Error fetching visible clients',
             error: error.message
         });
     }
 };
+
+
+export const hideClient = async (req: Request, res: Response) => {
+    try {
+        const { module_key, client_ids } = req.body;
+
+        const user_id = (req as any).user?._id; // ✅ Logged-in user
+
+        if (!user_id) {
+            return res.status(401).json({
+                success: false,
+                message: "Unauthorized"
+            });
+        }
+
+        if (!module_key) {
+            return res.status(400).json({
+                success: false,
+                message: "module_key is required"
+            });
+        }
+
+        if (!client_ids || !Array.isArray(client_ids) || client_ids.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: "client_ids array is required"
+            });
+        }
+
+        const hideClientEntry = await HideClient.findOneAndUpdate(
+            { module_key, user_id },
+            {
+                $addToSet: { client_ids: { $each: client_ids } },
+                $set: { user_id }
+            },
+            { upsert: true, new: true }
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: "Clients hidden successfully",
+            data: hideClientEntry
+        });
+
+    } catch (error: any) {
+        return res.status(500).json({
+            success: false,
+            message: "Error hiding clients",
+            error: error.message
+        });
+    }
+};
+
 
 
 export const getHiddenClients = async (req: Request, res: Response) => {
@@ -72,7 +145,7 @@ export const getHiddenClients = async (req: Request, res: Response) => {
         }
 
         const hiddenClients = await HideClient.find(query)
-            .populate('hidden_by', 'username email')
+            .populate('user_id', 'username email')
             .lean();
 
         res.status(200).json({
@@ -96,10 +169,10 @@ export const getHiddenClients = async (req: Request, res: Response) => {
 
 export const unhideClient = async (req: Request, res: Response) => {
     try {
-        const { client_id } = req.params;
+        const { clientId } = req.params;
         const { module_key } = req.query;
 
-        if (!client_id) {
+        if (!clientId) {
             return res.status(400).json({
                 status_code: 400,
                 success: false,
@@ -115,14 +188,17 @@ export const unhideClient = async (req: Request, res: Response) => {
             });
         }
 
+        const user_id = (req as any).user?._id; // ✅ Logged-in user
+
         // Remove the client_id from the client_ids array for the specific submodule
         const updatedEntry = await HideClient.findOneAndUpdate(
             {
                 module_key,
-                client_ids: client_id
+                user_id,
+                client_ids: clientId
             },
             {
-                $pull: { client_ids: client_id }
+                $pull: { client_ids: clientId }
             },
             { new: true }
         );
@@ -146,7 +222,7 @@ export const unhideClient = async (req: Request, res: Response) => {
             success: true,
             message: 'Client unhidden successfully',
             data: {
-                client_id,
+                client_id: clientId,
                 module_key
             }
         });
@@ -157,6 +233,111 @@ export const unhideClient = async (req: Request, res: Response) => {
             status_code: 500,
             success: false,
             message: 'Error in unhiding clients',
+            error: error.message
+        });
+    }
+};
+
+
+
+
+// ==================== PREFERENCES ====================
+
+/**
+ * GET preferences
+ */
+export const getPreferences = async (req: Request, res: Response) => {
+    try {
+        const user_id = (req as any).user?._id;
+        const module_key = req?.header('x-module-key');
+
+        if (!user_id) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized'
+            });
+        }
+
+        if (!module_key) {
+            return res.status(400).json({
+                success: false,
+                message: 'module_key is required'
+            });
+        }
+
+        const config = await HideClient.findOne({
+            user_id,
+            module_key
+        })
+            .select('preferences')
+            .lean();
+
+        return res.status(200).json({
+            success: true,
+            data: config?.preferences || {}
+        });
+
+    } catch (error: any) {
+        logger.error(error, 'Error fetching preferences:');
+        return res.status(500).json({
+            success: false,
+            message: 'Error fetching preferences',
+            error: error.message
+        });
+    }
+};
+
+
+/**
+ * POST - Save preferences
+ */
+export const savePreferences = async (req: Request, res: Response) => {
+    try {
+        const user_id = (req as any).user?._id;
+        const module_key = req?.header('x-module-key');
+        const { preferences } = req.body;
+
+
+        if (!user_id) {
+            return res.status(401).json({
+                success: false,
+                message: 'Unauthorized'
+            });
+        }
+
+        if (!module_key) {
+            return res.status(400).json({
+                success: false,
+                message: 'module_key is required'
+            });
+        }
+
+        if (!preferences || typeof preferences !== 'object') {
+            return res.status(400).json({
+                success: false,
+                message: 'preferences object is required'
+            });
+        }
+
+        const updated = await HideClient.findOneAndUpdate(
+            { user_id, module_key },
+            {
+                $set: { preferences }
+            },
+            { upsert: true, new: true }
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: 'Preferences saved successfully',
+            data: updated
+        });
+
+    } catch (error: any) {
+        logger.error(error, 'Error saving preferences:');
+        return res.status(500).json({
+            success: false,
+            message: 'Error saving preferences',
             error: error.message
         });
     }

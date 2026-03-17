@@ -6,9 +6,7 @@ async function groupDayWiseTransactionData(transactionData){
 					if (!acc[date]) {
 					   acc[date] = [];
 					}
-
 					acc[date].push(item);
-
 					return acc;
 					}, {});
 	return result;

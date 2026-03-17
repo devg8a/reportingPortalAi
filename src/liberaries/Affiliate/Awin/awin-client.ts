@@ -20,7 +20,7 @@ export async function triggerApi(url: string, requestData: AwinRequestData) {
       data    : response?.data,
     };
   }catch(error){
-    console.log('API call error==>',error);
-    throw error;
+    // console.log('Awin API call error==>',error);
+    throw error?.response?.data;
   }
 }

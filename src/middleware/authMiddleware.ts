@@ -6,14 +6,14 @@ import { getFinalPermissions, getClientPermissions } from "../services/permissio
 export const authMiddleware = async (req, res, next) => {
   try {
     const token = req.header('Authorization')?.replace('Bearer ', '');
-    const module_key = req?.header('modulekey');
-    
+    const module_key = req?.header('x-module-key');
+
     if (!token || !module_key) {
       return res.status(400).json({
-        status_code : 400,
-        success     : false,
-        message     : !token ? 'Unauthenticated: Authorization token missing.' : 'Module key missing.',
-        data        : []
+        status_code: 400,
+        success: false,
+        message: !token ? 'Unauthenticated: Authorization token missing.' : 'Module key missing.',
+        data: []
       });
     }
 
@@ -32,28 +32,35 @@ export const authMiddleware = async (req, res, next) => {
         });
       }
 
-       const hasAccess = await checkpermissions(module_key,decoded.user_id,decoded.entity_type);
-      if(!hasAccess){
+      const hasAccess = await checkpermissions(module_key, decoded.user_id, decoded.entity_type);
+      if (!hasAccess) {
         return res.status(403).json({
-            status_code: 403,
-            success: false,
-            message: 'Unauthorized Access: User do not have permission to access this resource. Contact Admin.',
-            data: []
+          status_code: 403,
+          success: false,
+          message: 'Unauthorized Access: User do not have permission to access this resource. Contact Admin.',
+          data: []
         });
       }
 
       // Refresh permissions to ensure they're up to date
       const freshPermissions = await getFinalPermissions(decoded.user_id);
       req.permissions = freshPermissions;
-      
+
       req.user = {
         ...decoded,
         _id: decoded.user_id
       };
-      
-    } else if (decoded.entity_type === 'client') {
-      const clientContact = await ClientContacts.findById(decoded.client_contact_id).select('-password');
 
+    } else if (decoded.entity_type === 'client') {
+      const clientContact = await ClientContacts.findById(decoded.client_contact_id).select('-password').populate({
+        path: 'client_id',
+        select: 'role_id',
+        populate: {
+          path: 'role_id'
+        }
+      });
+
+      console.log(clientContact, "clientContact")
       if (!clientContact || clientContact.status !== 'active') {
         return res.status(422).json({
           status_code: 422,
@@ -63,26 +70,28 @@ export const authMiddleware = async (req, res, next) => {
         });
       }
 
+      const populatedClientId = clientContact.client_id as any;
+      const Croles_id = populatedClientId?.role_id?._id;
 
-       const hasAccess = await checkpermissions(module_key,decoded.user_id,decoded.entity_type);
-      if(!hasAccess){
+      const hasAccess = await checkpermissions(module_key, decoded.user_id, decoded.entity_type, Croles_id);
+      if (!hasAccess) {
         return res.status(403).json({
-            status_code: 403,
-            success: false,
-            message: 'Unauthorized Access: User do not have permission to access this resource. Contact Admin.',
-            data: []
+          status_code: 403,
+          success: false,
+          message: 'Unauthorized Access: User do not have permission to access this resource. Contact Admin.',
+          data: []
         });
       }
-      
+
       // Refresh permissions to ensure they're up to date
       const freshPermissions = await getClientPermissions(decoded.client_contact_id);
       req.permissions = freshPermissions;
-      
+
       req.user = {
         ...decoded,
         _id: decoded.client_contact_id
       };
-      
+
     } else {
       return res.status(422).json({
         status_code: 422,
@@ -104,20 +113,20 @@ export const authMiddleware = async (req, res, next) => {
   }
 };
 
-async function checkpermissions(module_key,userId,entityType){
-    const userPermissions = await getFinalPermissions(userId);
-    const hasAccess       = userPermissions?.[module_key]?.access || false;
-    // console.log('hasAccess==>',module_key+ ' '+hasAccess);
-    return hasAccess;
+async function checkpermissions(module_key, userId, entityType, role_id = null) {
+  const userPermissions = await getFinalPermissions(userId, entityType, role_id);
+  const hasAccess = userPermissions?.[module_key]?.access || false;
+  // console.log('hasAccess==>',module_key+ ' '+hasAccess);
+  return hasAccess;
 }
 
 export const requireAdmin = (req, res, next) => {
   if (!req.user) {
     return res.status(422).json({
-      status_code : 422,
-      success     : false,
-      message     : 'Unauthenticated: Authentication required.',
-      data        : null
+      status_code: 422,
+      success: false,
+      message: 'Unauthenticated: Authentication required.',
+      data: null
     });
   }
 

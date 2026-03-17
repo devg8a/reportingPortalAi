@@ -40,6 +40,7 @@ export function buildDaywiseMetrics(reportDataList: any[]) {
       channel: channelGroup,
       totalRevenue: to2Decimal(reportData?.metricValues[0]?.value),
       sessions: sessions,
+      engagedSessions: Number(reportData?.metricValues[2]?.value),
       transactions: transactions,
       itemsPurchased: Number(reportData?.metricValues[3]?.value),
       newUsers: Number(reportData?.metricValues[4]?.value),

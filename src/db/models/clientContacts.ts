@@ -13,18 +13,14 @@ const clientContactsSchema = new mongoose.Schema({
   },
   first_name: {
     type: String,
-    required: true,
     trim: true
   },
   last_name: {
     type: String,
-    required: true,
     trim: true
   },
   email: {
     type: String,
-    required: true,
-    unique: true,
     lowercase: true,
     trim: true
   },
@@ -33,16 +29,16 @@ const clientContactsSchema = new mongoose.Schema({
     required: true
   },
   is_invitation_sent: {
-    type: String,
-    default: 'pending'
+    type: Boolean,
+    default: 'false'
   },
   status: {
     type: String,
     default: 'active'
   },
   email_notification_preference: {
-    type: String,
-    default: 'on'
+    type: Boolean,
+    default: 'false'
   },
   overrides: {
     type: Map,

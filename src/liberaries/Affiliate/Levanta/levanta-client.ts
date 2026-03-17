@@ -9,13 +9,14 @@ export async function triggerApi(url,requestData) {
           Authorization: `Bearer ${requestData?.apiKey}`, 
       },
     });
-    console.log('levanta triggerApi==> ',response)
+    // console.log('levanta triggerApi==> ',response?.data)
     return {
       headers: response?.headers,
       status: response?.status,
-      data: response?.data?.data,
+      data: response?.data,
     };
   }catch(error){
-    console.log('API call error==>',error);
+    // console.log('API call error==>',error);
+    throw error?.response?.data;
   }
 }

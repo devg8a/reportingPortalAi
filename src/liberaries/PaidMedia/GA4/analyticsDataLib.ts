@@ -30,8 +30,6 @@ export class analyticsDataService {
         { name: requestData?.granularity === 'hourly' ? 'dateHour' : 'date' },
         { name: 'sessionDefaultChannelGroup' }
       ];
-      console.log(requestData, "accountId")
-
 
       const [response] = await this.analyticsClient.runReport({
         property: `properties/${requestData?.accountId}`,
@@ -42,12 +40,13 @@ export class analyticsDataService {
         metrics: [
           { name: 'totalRevenue' },
           { name: 'sessions' },
+          { name: 'engagedSessions' },
           { name: 'transactions' },
           { name: 'itemsPurchased' },
           { name: 'newUsers' },
           { name: 'bounceRate' },
           { name: 'averageSessionDuration' }, //in seconds
-          { name: 'userEngagementDuration' },
+          { name: 'userEngagementDuration' }, //in seconds
           { name: 'screenPageViewsPerSession' },
 
         ],
@@ -58,18 +57,20 @@ export class analyticsDataService {
           }]
       });
 
-      const rows = response.rows || [];
       // console.log(response, "resposo")
+      const rows = response.rows || [];
+      // console.log(rows, "rows")
       // logger.info(rows, 'response')
       const data = buildDaywiseMetrics(rows);
       if (requestData?.granularity !== "hourly") {
         await captureToCentralStorage(data, requestData.clientId, requestData.connectionId, "ga");
       }
+      // console.log(data, "data")
       return data;
     } catch (error) {
       await ErrorLogs.insertOne({
         client_id: requestData?.clientId,
-        account_id: requestData?.accountId,
+        connection_id: requestData?.connectionId,
         network: 'ga',
         start_date: requestData?.startDate,
         end_date: requestData?.endDate,

@@ -1,7 +1,4 @@
-import Integrations from "../db/models/integrations";
-import { allStoresNetworkData } from '../jobs/allStoresJob';
 import ClientIcp from "../db/models/clientIcp";
-import { readGoogleSheet } from "../liberaries/Google/SpreadSheet/Connection/accounts";
 import { AnalyticsAdminService } from '../liberaries/PaidMedia/GA4/analyticsAdminLib';
 import { analyticsDataService } from '../liberaries/PaidMedia/GA4/analyticsDataLib';
 import { MetaService } from '../liberaries/PaidMedia/Meta/metaLib';
@@ -17,37 +14,48 @@ import logger from '../utils/logger';
 import clientDetails from "../db/models/clientDetails";
 import { SheetLib } from "../liberaries/GoogleSheet/sheetLib";
 import { klaviyoService } from "../liberaries/PaidMedia/Klaviyo/klaviyo-service";
-import captureToCentralStorage from "../liberaries/central-storage-service";
-import {CjService} from "../liberaries/Affiliate/Cj/cj-service"
+import PerformanceClientDetail from "../db/models/performanceClientDetail";
+import schedularLogs from "../db/models/schedularLogs";
+import { redisConnection } from "../config/redis";
+import { ImpactService } from "../liberaries/Affiliate/Impact/impact-service";
+import { RakutenService } from "../liberaries/Affiliate/Rakuten/rakuten-service";
+import { PepperjamService } from "../liberaries/Affiliate/Pepperjam/pepperjam-service";
+import { AwinService } from "../liberaries/Affiliate/Awin/awin-service";
+import { AvantlinkService } from "../liberaries/Affiliate/Avantlink/avantlink-service";
+import { CjService } from "../liberaries/Affiliate/Cj/cj-service";
+import { LevantaService } from "../liberaries/Affiliate/Levanta/levanta-service";
+import { HubspotService } from "../liberaries/Hubspot/HubspotLib";
 
 export const affiliateNetworkTestingApi = async (req, res) => {
 	try {
-		const clientId = req?.body?.client_id;
-		const network = req?.body?.network;
-		const storesIntegrations = await Integrations.find({
-			...(clientId && { client_id: clientId }),
-			...(network && { network }),
-		}).populate('client_id', 'client_id name').lean();
-		const finalResult = await allStoresNetworkData(clientId, network);
-		res.status(200).json({ status_code: 200, success: true, message: 'Integrations fetched successfull', data: finalResult });
+		const networkHandlers: Record<string, (data: any) => Promise<any>> = {
+			rakuten: (data) => {
+				return new RakutenService().transactionList(data);
+			},
+			impact: (data) => {
+				return new ImpactService().transactionList(data);
+			},
+			awin: (data) => {
+				return new AwinService().transactionList(data);
+			},
+			avantlink: (data) => {
+				return new AvantlinkService().transactionList(data);
+			},
+			cj: (data) => {
+				return new CjService().transactionList(data);
+			},
+			levanta: (data) => {
+				return new LevantaService().transactionList(data);
+			},
+			pepperjam: (data) => {
+				return new PepperjamService().transactionList(data);
+			}
+		};
+		const response = await networkHandlers[req?.body?.network](req.body);
+		res.status(200).json({ status_code: 200, success: true, message: 'Affiliate Network data fetched successfull', data: response });
 	} catch (error) {
-		res.status(422).json({ status_code: 422, success: false, message: 'Error in Integrations', data: error });
-	}
-}
-
-export const intgrationStore = async (req, res) => {
-	try {
-		const integrationData = await Integrations.create({
-			client_id: req.body.client_id,
-			network: req.body.network,
-			value: req.body.store_url,
-			token: req.body.access_token
-			//   account_id   : req.body.account_id,
-			//   auth_key     : req.body.auth_key,
-		});
-		res.status(200).json({ status_code: 200, success: true, message: 'Integrations stored successfully', data: integrationData });
-	} catch (error) {
-		res.status(422).json({ status_code: 422, success: false, message: 'Error in Integrations', data: error });
+		// logger.info(error,"Affiliate API Error: ");
+		res.status(422).json({ status_code: 422, success: false, message: 'Error in Affiliate Network', data: error });
 	}
 }
 
@@ -111,10 +119,11 @@ export const gaAnalyticsReport = async (req, res) => {
 			startDate: req?.body?.startDate,
 			endDate: req?.body?.endDate,
 			clientId: req?.body?.clientId,
-			connectionId: req?.body?.connectionId,
+			connectionId: req?.body?.connectionId
 		}
 		const analytics = new analyticsDataService();
 		const ga4DataList = await analytics.fetchAnalyticsReport(requestData);
+		// console.log(ga4DataList, "ga4DataList")
 		res.status(200).json({ status_code: 200, success: true, message: 'GA4 Data fetched successfully', data: ga4DataList });
 	} catch (error) {
 		res.status(422).json({ status_code: 422, success: false, message: 'Error in retreiving GA4 data.', data: error });
@@ -132,6 +141,7 @@ export const shopifyReport = async (req, res) => {
 			connectionId: req?.body?.connectionId,
 		}
 		const shopify = new ShopifyService();
+		// const shopifyResponse = await shopify.storeDetailsApi(requestData);
 		const shopifyResponse = await shopify.salesreport(requestData);
 		res.status(200).json({ status_code: 200, success: true, message: 'Shopify Data fetched successfully', data: shopifyResponse });
 	} catch (error) {
@@ -156,6 +166,8 @@ export const metaInsightReport = async (req, res) => {
 			startDate: req?.body?.startDate,
 			endDate: req?.body?.endDate,
 			clientId: req?.body?.clientId,
+			granularity: req?.body?.granularity,
+			connectionId: req?.body?.connectionId,
 		}
 		const metaLib = new MetaService();
 		const metaAccountData = await metaLib.getMetaAccountData(requestData);
@@ -183,11 +195,13 @@ export const fetchAdwordReport = async (req, res) => {
 			endDate: req.body.endDate,
 			adGroupIds: req.body.adGroupIds,       // [1587..., 1461..., ...]
 			assetGroupIds: req.body.assetGroupIds, // [6477..., 6530..., ...]
+			clientId: req.body.clientId,
+			connectionId: req.body.connectionId,
 		}
 		const adwordLib = new AdwordService();
-		// const adwordAccountData = await adwordLib.adwordReport(requestData);
-		const adwordAccountData = await adwordLib.performanceReport(requestData);
-		console.log('adwordAccountData==>', adwordAccountData);
+		const adwordAccountData = await adwordLib.adwordReport(requestData);
+		// const adwordAccountData = await adwordLib.performanceReport(requestData);
+		// console.log('adwordAccountData==>', adwordAccountData);
 		res.status(200).json({ status_code: 200, success: true, message: 'Adword Account Report fetched successfully.', data: adwordAccountData });
 	} catch (error) {
 		res.status(422).json({ status_code: 422, success: false, message: 'Error in retreiving Adword Account Report.', data: error });
@@ -207,15 +221,17 @@ export const fetchCriteoAccounts = async (req, res) => {
 export const fetchCriteoReport = async (req, res) => {
 	try {
 		const requestData = {
+			clientId: req.body.clientId,
 			accountId: req.body.accountId,
 			startDate: req.body.startDate,
-			endDate: req.body.endDate
+			endDate: req.body.endDate,
+			connectionId: req.body.connectionId,
 		}
 		const criteoLib = new CriteoService();
 		const criteoAccountList = await criteoLib.getStatisticsReport(requestData);
 		res.status(200).json({ status_code: 200, success: true, message: 'Criteo Account Report fetched successfully.', data: criteoAccountList });
 	} catch (error) {
-		res.status(422).json({ status_code: 422, success: false, message: 'Error in retreiving Criteo Account Report.', data: error });
+		res.status(422).json({ status_code: 422, success: false, message: 'Error in retreiving Criteo Account Report.', data: error?.stack });
 	}
 }
 
@@ -268,12 +284,22 @@ export const findStore = async (req, res) => {
 export const mondayTest = async (req, res) => {
 	try {
 		const monday = new MondayService();
-		const response = await monday.mondayClientList();
+		// const response = await monday.mondayClientList();
+		// const response = await monday.updateMondayBoard();
+		const response = await monday.getBoards([4148302055]);
 		res.status(200).json({ status_code: 200, success: true, message: 'Monday API fetched successfully.', data: response });
 	} catch (error) {
 		res.status(422).json({ status_code: 422, success: false, message: 'Error in Monday API.', data: error });
 	}
 }
+
+
+
+
+
+
+
+
 
 export const prepareBulkData = async (req, res) => {
 	try {
@@ -409,17 +435,374 @@ export const testRefreshToken = async (req, res) => {
 
 export const klaviyoTest = async (req, res) => {
 	try {
-		const klaviyoLib = new klaviyoService(req.body.accountkey);
+		const klaviyoLib = new klaviyoService();
 		// const klaviyyo   = await klaviyoLib.getMetrices();
 		// const klaviyyo   = await klaviyoLib.getProfiles();
 		// const klaviyyo   = await klaviyoLib.getCampaigns(req.body);
 		// const klaviyyo   = await klaviyoLib.getFlows();
 		// const klaviyyo   = await klaviyoLib.reporting(req.body);
 		// const klaviyyo   = await klaviyoLib.flowReporting(req.body);
-		const klaviyyo   = await klaviyoLib.fetchKlaviyoRecords(req.body);
+		const klaviyyo = await klaviyoLib.fetchKlaviyoRecords(req.body);
 		res.status(200).json({ status_code: 200, success: true, message: 'klaviyo triggered successfully.', data: klaviyyo });
 	} catch (error) {
 		console.log('error==>', error);
 		res.status(422).json({ status_code: 422, success: false, message: 'Error in klaviyo.', data: error });
 	}
+}
+
+
+
+import { Request, Response } from "express";
+import clientConnections from "../db/models/clientConnections";
+import AccountSummary from "../db/models/AccountSummary";
+import moment from "moment";
+import { populate } from "dotenv";
+import { testTemplate } from '../emailTemplates/test';
+import { triggerEmailNotification } from '../services/emailService';
+
+export const getPerformanceRevenue = async (req: Request, res: Response) => {
+	try {
+
+		const { clientId, startDate, endDate } = req.body;
+
+		const startMonth = startDate.slice(0, 7);
+		const endMonth = endDate.slice(0, 7);
+
+		const reports = await PerformanceClientDetail.find({
+			client_id: clientId,
+			year_month: { $gte: startMonth, $lte: endMonth }
+		}).lean();
+
+		// ✅ Generic extractor
+		const extractMetric = (obj: any, metricKey: string): number => {
+			let sum = 0;
+
+			if (!obj || typeof obj !== "object") return 0;
+
+			for (const key in obj) {
+				if (key === metricKey && typeof obj[key] === "number") {
+					sum += obj[key];
+				} else if (typeof obj[key] === "object") {
+					sum += extractMetric(obj[key], metricKey);
+				}
+			}
+
+			return sum;
+		};
+
+		let metaRevenue = 0;
+		let adwordRevenue = 0;
+		let shopifyRevenue = 0;
+
+		let metaSpend = 0;
+		let adwordSpend = 0;
+
+		reports.forEach((report) => {
+
+			const data = report?.data || {};
+
+			// META
+			Object.entries(data.meta_response || {}).forEach(([date, val]: any) => {
+				if (date >= startDate && date <= endDate) {
+					metaRevenue += extractMetric(val, "revenue");
+					metaSpend += extractMetric(val, "spend");
+				}
+			});
+
+			// ADWORD
+			Object.entries(data.adword_response || {}).forEach(([date, val]: any) => {
+				if (date >= startDate && date <= endDate) {
+					adwordRevenue += extractMetric(val, "revenue");
+					adwordSpend += extractMetric(val, "spend");
+				}
+			});
+
+			// SHOPIFY
+			Object.entries(data.shopify_response || {}).forEach(([date, val]: any) => {
+				if (date >= startDate && date <= endDate) {
+					shopifyRevenue += extractMetric(val, "revenue");
+				}
+			});
+
+		});
+
+		// ✅ ROAS Calculations
+		const metaRoas = metaSpend ? metaRevenue / metaSpend : 0;
+		const adwordRoas = adwordSpend ? adwordRevenue / adwordSpend : 0;
+		const shopifyRoas =
+			(metaSpend + adwordSpend)
+				? shopifyRevenue / (metaSpend + adwordSpend)
+				: 0;
+
+		return res.status(200).json({
+			status_code: 200,
+			success: true,
+			message: "Revenue fetched successfully",
+			data: {
+				metaRevenue,
+				adwordRevenue,
+				shopifyRevenue,
+
+				metaSpend,
+				adwordSpend,
+				totalSpend: metaSpend + adwordSpend,
+
+				metaRoas,
+				adwordRoas,
+				shopifyRoas,
+
+				totalRevenue: metaRevenue + adwordRevenue + shopifyRevenue
+			}
+		});
+
+	} catch (error) {
+
+		console.log("Revenue Error =>", error);
+
+		return res.status(422).json({
+			status_code: 422,
+			success: false,
+			message: "Error fetching revenue",
+			data: error
+		});
+
+	}
+};
+
+export const fetchSchedularLogs = async (req, res) => {
+	try {
+		const logs = await schedularLogs.find();
+		res.status(200).json({ status_code: 200, success: true, message: 'Schedular logs fetched successfully.', data: logs });
+	} catch (error) {
+		return res.status(422).json({ status_code: 422, success: false, message: "Error fetching Schedular", data: error });
+	}
+}
+
+export const testingShopifyRevenueApi = async (req, res) => {
+	try {
+
+		const now = moment();
+
+		// ===== Account Summary (Date Only) =====
+		const todayDate = now.format("YYYY-MM-DD");
+		const prevTodayDate = now.clone().subtract(1, "day").format("YYYY-MM-DD");
+
+		// ===== Central Storage Base =====
+		const yesterdayStart = now.clone().subtract(1, "day").startOf("day");
+		const yesterdayEnd = now.clone().subtract(1, "day").endOf("day");
+
+		const dayBeforeStart = now.clone().subtract(2, "day").startOf("day");
+		const dayBeforeEnd = now.clone().subtract(2, "day").endOf("day");
+
+		// ===== LAST 7 =====
+		const last7Start = now.clone().subtract(7, "day").startOf("day");
+		const last7End = yesterdayEnd;
+
+		// ===== PREV 7 =====
+		const prev7Start = now.clone().subtract(14, "day").startOf("day");
+		const prev7End = now.clone().subtract(8, "day").endOf("day");
+
+		// ===== LAST 30 =====
+		const last30Start = now.clone().subtract(30, "day").startOf("day");
+		const last30End = yesterdayEnd;
+
+		// ===== PREV 30 =====
+		const prev30Start = now.clone().subtract(60, "day").startOf("day");
+		const prev30End = now.clone().subtract(31, "day").endOf("day");
+
+		// ===== Clients =====
+		const clients = await clientDetails.find({ status: "active" }).lean();
+
+		const centralModel = getCentralStorageModel("central_storage_2025");
+
+
+		const test = await centralModel.findOne({ network: "shopify" });
+		console.log("Sample Date:", test?.date);
+
+		// ===== Number Normalizer =====
+		const toNumber = (val: any): number => {
+			const num = Number(val);
+			return isNaN(num) ? 0 : num;
+		};
+
+		// ===== Shopify Revenue Formula =====
+		const calcRevenue = (data) => {
+			if (!data) return 0;
+
+			const gross = Math.abs(data?.gross_sales);
+			const disc = Math.abs(data?.discounts);
+			const tax = Math.abs(data?.taxes);
+			const shipping = Math.abs(data?.shipping_charges);
+
+			return gross - disc + tax + shipping;
+		};
+
+		// ===== Account Summary Revenue =====
+		const getAccountSummaryRevenue = async (clientId, date) => {
+
+			const rows = await AccountSummary.find({
+				client_id: clientId,
+				date: date
+			}).lean();
+
+			console.log(rows, "Account Summary Rows");
+
+			let total = 0;
+
+			rows.forEach(row => {
+				total += calcRevenue(row?.raw?.shopify);
+			});
+
+			console.log(total, "Account Summary Revenue");
+
+			return total;
+		};
+
+		// ===== Central Storage Revenue =====
+		const getCentralRevenue = async (clientId, start, end) => {
+
+			const rows = await centralModel.find({
+				client_id: clientId.toString(),
+				network: "shopify",
+				date: {
+					$gte: start.toDate(),
+					$lte: end.toDate()
+				}
+			}).lean();
+			// console.log("Rows Count:", rows);
+
+			return rows.reduce((sum, row) => {
+				return sum + calcRevenue(row?.data);
+			}, 0);
+		};
+
+
+		const finalResult = [];
+
+		for (const client of clients) {
+
+			const shopifyConnection = await clientConnections.findOne({
+				client_id: client._id.toString(),
+				network: "shopify"
+			});
+
+			if (!shopifyConnection) continue;
+
+			// ===== Account Summary =====
+			const todayRevenue = await getAccountSummaryRevenue(client._id, todayDate);
+			const prevTodayRevenue = await getAccountSummaryRevenue(client._id, prevTodayDate);
+
+			// ===== Central Storage =====
+			const yesterdayRevenue = await getCentralRevenue(client._id, yesterdayStart, yesterdayEnd);
+			const dayBeforeRevenue = await getCentralRevenue(client._id, dayBeforeStart, dayBeforeEnd);
+
+			const last7Revenue = await getCentralRevenue(client._id, last7Start, last7End);
+			const prev7Revenue = await getCentralRevenue(client._id, prev7Start, prev7End);
+
+			const last30Revenue = await getCentralRevenue(client._id, last30Start, last30End);
+			const prev30Revenue = await getCentralRevenue(client._id, prev30Start, prev30End);
+
+
+			console.log(todayRevenue, prevTodayRevenue, yesterdayRevenue, dayBeforeRevenue, last7Revenue, prev7Revenue, last30Revenue, prev30Revenue);
+
+			finalResult.push({
+				clientId: client._id,
+				clientName: client.name,
+
+				todayTillNow: Number(todayRevenue.toFixed(2)),
+				prevTodayTillNow: Number(prevTodayRevenue.toFixed(2)),
+
+				yesterdayFullDay: Number(yesterdayRevenue.toFixed(2)),
+				dayBeforeYesterday: Number(dayBeforeRevenue.toFixed(2)),
+
+				last7Days: Number(last7Revenue.toFixed(2)),
+				prev7Days: Number(prev7Revenue.toFixed(2)),
+
+				last30Days: Number(last30Revenue.toFixed(2)),
+				prev30Days: Number(prev30Revenue.toFixed(2))
+			});
+		}
+
+		return res.status(200).json({
+			success: true,
+			data: finalResult
+		});
+
+	} catch (error) {
+
+		console.log("Testing Shopify Revenue Error =>", error);
+
+		return res.status(500).json({
+			success: false,
+			error
+		});
+	}
+};
+
+export const printAllRedisData = async (req, res) => {
+	let cursor = "0";
+	let cacheResult: any = [];
+	do {
+		const result = await redisConnection.scan(cursor, "MATCH", "*", "COUNT", 100);
+		cursor = result[0];
+		const keys = result[1];
+
+		for (const key of keys) {
+		const type = await redisConnection.type(key);
+
+		let value;
+
+		switch (type) {
+			case "string":
+			value = await redisConnection.get(key);
+			break;
+			case "hash":
+			value = await redisConnection.hgetall(key);
+			break;
+			case "list":
+			value = await redisConnection.lrange(key, 0, -1);
+			break;
+			case "set":
+			value = await redisConnection.smembers(key);
+			break;
+			case "zset":
+			value = await redisConnection.zrange(key, 0, -1, "WITHSCORES");
+			break;
+			default:
+			value = "Unsupported type";
+		}
+
+		cacheResult.push({Key:key, type: type, value:value});
+		}
+
+	} while (cursor !== "0");
+	return res.status(200).json({ success: true, status_code: 200, message: "Redis cache fetched successfully.", data: cacheResult });
+}
+
+
+
+export const testEmailNotification = async (req, res) => {
+	try {
+		const dataRecords = req.body;
+		const recepient = "prakash@group8a.com";
+		const subject = "Important: (New Portal) Monday Data Sync";
+		const content = testTemplate(dataRecords);
+		await triggerEmailNotification(recepient, subject, content);
+		return res.status(200).json({
+			success: true,
+			message: "Email sent successfully"
+		});
+	} catch (error) {
+		return res.status(500).json({
+			success: false,
+			error
+		});
+	}
+}
+
+export const hubspotTest = async (req, res) => {
+	const hubspot = new HubspotService();
+	// const contacts = await hubspot.getAllContacts();
+	const contacts = await hubspot.fetchAllContactLists();
+	return res.status(200).json({ success: true, status_code: 200, message: "hubspot successfully.", data: contacts });
 }

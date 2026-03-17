@@ -1,29 +1,35 @@
-import mongoose from 'mongoose';
+import mongoose, { Schema } from 'mongoose';
 
-const hideClientSchema = new mongoose.Schema({
+const clientVisibilitySchema = new Schema({
+    user_id: {
+        type: Schema.Types.ObjectId,
+        ref: 'User',
+        required: true
+    },
+
     module_key: {
         type: String,
         required: true
     },
+
+    // Optional
     client_ids: [{
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'client_details',
-        required: true
+        type: Schema.Types.ObjectId,
+        ref: 'client_details'
     }],
-    hidden_by: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
-        required: true
-    },
-    reason: {
-        type: String,
-        default: null
+
+    // Optional
+    preferences: {
+        type: Schema.Types.Mixed
     }
+
 }, {
     timestamps: true,
-    versionKey: false,
+    versionKey: false
 });
 
-const HideClient = mongoose.model("hide_clients", hideClientSchema);
+clientVisibilitySchema.index({ user_id: 1, module_key: 1 }, { unique: true });
 
-export default HideClient;
+const ClientVisibility = mongoose.model('client_visibility', clientVisibilitySchema);
+
+export default ClientVisibility;

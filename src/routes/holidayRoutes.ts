@@ -12,12 +12,12 @@ const router = express.Router();
 
 router.get('/', getAllHolidays);
 
-router.get('/:holidayId', getHolidayById);
+router.get('/:holidayId', authMiddleware, getHolidayById);
 
-router.post('/',  createHoliday);
+router.post('/', authMiddleware, createHoliday);
 
-router.put('/:holidayId', updateHoliday);
+router.put('/:holidayId', authMiddleware, updateHoliday);
 
-router.delete('/:holidayId', deleteHoliday);
+router.delete('/:holidayId', authMiddleware, deleteHoliday);
 
 export default router;

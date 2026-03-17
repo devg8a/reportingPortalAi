@@ -1,11 +1,16 @@
 import * as apiClient from './bing-client';
 import { prepareReportBody, getBingReportRows } from './bing-utils';
 import logger from '../../../utils/logger';
-import { getCentralStorageModel } from "../../../db/schema/dynamic-central-model";
-import { getMongoDbObjectId } from "../../../helper/helper";
+import ErrorLogs from "../../../db/models/errorLogs";
 import { captureToCentralStorage } from '../../../db/schema/capture-central-storage';
 
+/**
+ * https://learn.microsoft.com/en-us/advertising/guides/?view=bingads-13
+ * https://learn.microsoft.com/en-us/advertising/reporting-service/submitgeneratereport?view=bingads-13&tabs=prod&pivots=rest
+ * Metrics: https://learn.microsoft.com/en-us/advertising/reporting-service/accountperformancereportcolumn?view=bingads-13
+ */
 export class BingService {
+  private apiRequestData: any = {};
 
   async fetchAccessToken() {
     const accessToken = await apiClient.authenticate();
@@ -30,15 +35,36 @@ export class BingService {
       }
     } catch (error) {
       console.log('error==>', error);
+
     }
   }
 
   async generateReport(requestData) {
-    const accessToken = await this.fetchAccessToken();
-    const reportId = await this.generateReportId(requestData, accessToken);
-    const reportResponse = await this.reportDownload(reportId, accessToken);
-    captureToCentralStorage(reportResponse, requestData?.clientId, requestData?.connectionId, 'bing');
-    return reportResponse;
+    try {
+      this.apiRequestData = requestData;
+      const accessToken    = await this.fetchAccessToken();
+      const reportId       = await this.generateReportId(requestData, accessToken);
+      // console.log("reportId==>",reportId);
+      if (!reportId) {
+        throw new Error(`Failed to generate Bing reportId | requestData: ${JSON.stringify(requestData)}`);
+      }
+      const reportResponse = await this.reportDownload(reportId, accessToken);
+      // console.log("reportResponse==>",reportResponse);
+      if (reportResponse) {
+        captureToCentralStorage(reportResponse, requestData?.clientId, requestData?.connectionId, 'bing');
+      }
+      return reportResponse;
+    } catch (error) {
+      await ErrorLogs.insertOne({
+        client_id: requestData?.clientId,
+        connection_id: requestData?.connectionId,
+        network: "bing",
+        start_date: requestData?.startDate,
+        end_date: requestData?.endDate,
+        error: error?.message ?? JSON.stringify(error),
+      });
+      throw error;
+    }
   }
 
   async generateReportId(requestData, accessToken) {
@@ -56,6 +82,7 @@ export class BingService {
       }
     } catch (error) {
       logger.error(error, "Error in Bing Report Id generate: ")
+      throw error;
     }
   }
 
@@ -71,14 +98,24 @@ export class BingService {
         ReportRequestId: reportId
       }
       const response = await apiClient.triggerApi(url, headers, body);
+      // console.log("fetchReportStatus response==>",response);
       if (response.status == 200) {
-        if (response?.data?.ReportRequestStatus?.Status == 'Pending') {
-          await this.fetchReportStatus(reportId, accessToken);
+        if (response?.data?.ReportRequestStatus?.Status == 'Pending' || response?.data?.ReportRequestStatus?.Status == 'undefined') {
+          // console.log("ReportRequestStatus data==>",response?.data);
+          return await this.fetchReportStatus(reportId, accessToken);
         } else {
           return response?.data?.ReportRequestStatus;
         }
       }
     } catch (error) {
+      await ErrorLogs.insertOne({
+        client_id: this.apiRequestData?.clientId,
+        connection_id: this.apiRequestData?.connection_id,
+        network: "bing",
+        start_date: this.apiRequestData?.startDate,
+        end_date: this.apiRequestData?.endDate,
+        error: JSON.stringify(error)
+      });
       logger.error(error, "Error in Bing Report Status: ");
     }
   }
@@ -86,20 +123,30 @@ export class BingService {
   async reportDownload(reportId, accessToken) {
     try {
       const reportStatus = await this.fetchReportStatus(reportId, accessToken);
-      // logger.info(reportStatus,'reportStatus: ');
-      if (reportStatus?.status == 'Success' && reportStatus?.ReportDownloadUrl == null) {
-        return [];
+      // console.log("reportStatus:",reportStatus);
+      if (reportStatus?.Status == 'Success' && reportStatus?.ReportDownloadUrl == null) {
+          return []; //no data available, thats why the url is null
       } else {
+        // console.log("error reportStatus:",reportStatus);
         const downloadUrl = reportStatus?.ReportDownloadUrl;
         const result = await getBingReportRows(downloadUrl);
         // logger.info(result,"result: ");
         return result;
       }
     } catch (error) {
-      logger.error(error, 'Error in Bing Report Download: ');
+      await ErrorLogs.insertOne({
+        client_id: this.apiRequestData?.clientId,
+        connection_id: this.apiRequestData?.connection_id,
+        network: "bing",
+        start_date: this.apiRequestData?.startDate,
+        end_date: this.apiRequestData?.endDate,
+        error: JSON.stringify(error)
+      });
+      throw error;
     }
   } catch(error) {
     logger.error(error, 'Error in Bing Report Download');
+    throw error;
   }
 }
 

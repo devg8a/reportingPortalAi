@@ -542,6 +542,8 @@ export const getAllUsers = async (req, res) => {
         ];
       } else if (searchIn === 'email') {
         filter.email = searchRegex;
+      } else if (searchIn === 'user_type') {
+        filter.user_type = searchRegex;
       } else { 
         const matchingRoles = await Role.find({
           name: searchRegex
@@ -552,7 +554,8 @@ export const getAllUsers = async (req, res) => {
         const searchConditions = [
           { first_name: searchRegex },
           { last_name: searchRegex },
-          { email: searchRegex }
+          { email: searchRegex },
+          { user_type: searchRegex }
         ];
         
         if (roleIds.length > 0) {
@@ -818,6 +821,56 @@ export const updateUserOverrides = async (req, res) => {
     });
   } catch (error) {
     console.error('Update user overrides error:', error);
+    return res.status(500).json({
+      status_code: 500,
+      success: false,
+      message: 'Internal server error',
+      data: null
+    });
+  }
+};
+
+export const getUsersByUserType = async (req, res) => {
+  try {
+    const { user_type } = req.query;
+    let filter = {};
+    const leadTypes = [
+      'affiliate lead',
+      'meta lead',
+      'search lead',
+      'email lead',
+      'design lead'
+    ];
+    if (user_type && user_type.toLowerCase() === 'account manager') {
+      filter = {
+        user_type: { $regex: /^account manager$/i }
+      };
+    } 
+    else if (!user_type) {
+      filter = {
+        user_type: {
+          $in: leadTypes.map(type => new RegExp(`^${type}$`, 'i'))
+        }
+      };
+    }
+    const users = await User.find(filter)
+      .select('-password')
+      .populate({
+        path: 'role_id',
+        select: 'name'
+      })
+      .sort({ first_name: 1 });
+    return res.status(200).json({
+      status_code: 200,
+      success: true,
+      message: 'Users fetched successfully',
+      data: {
+        users,
+        count: users.length
+      }
+    });
+  } catch (error) {
+    console.error('Get users error:', error);
     return res.status(500).json({
       status_code: 500,
       success: false,

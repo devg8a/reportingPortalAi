@@ -1,16 +1,14 @@
 import express from 'express';
 import {
   createClientSetting,
-  // updateClientSetting,
-  getClientSetting,
+  updateClientSetting,
 } from '../controllers/benchmarkSettingController';
 import { authMiddleware } from '../middleware/authMiddleware';
 
 const router = express.Router();
 
-router.post('/client-settings', authMiddleware, createClientSetting);
-// router.put('/client-settings/:settingId', authMiddleware, updateClientSetting);
-router.get('/client-settings/:settingId', getClientSetting);
+router.post('/client-settings/:clientId', createClientSetting);
+router.put('/client-settings/:settingId', updateClientSetting);
 
 
 export default router;

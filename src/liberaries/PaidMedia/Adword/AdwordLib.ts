@@ -6,6 +6,12 @@ import { captureToCentralStorage } from "../../../db/schema/capture-central-stor
 
 export class AdwordService {
 
+  /***
+   * Documentation url: https://developers.google.com/google-ads/api/docs/oauth/service-accounts#account_access_setup
+   * https://developers.google.com/google-ads/api/fields/v22/overview
+   * NodeJS: https://www.npmjs.com/package/google-ads-api
+   */
+
   private client: GoogleAdsApi;
   private refreshToken = process.env.ADWORD_REFRESH_TOKEN;
   private mccId = process.env.ADWORD_MCC_ID;
@@ -83,7 +89,7 @@ export class AdwordService {
     } catch (error) {
       await ErrorLogs.insertOne({
         client_id: requestData?.clientId,
-        account_id: requestData?.customerId,
+        connection_id: requestData?.connectionId,
         network: 'adword',
         start_date: requestData?.startDate,
         end_date: requestData?.endDate,
@@ -93,100 +99,62 @@ export class AdwordService {
     }
   }
 
-  // async performanceReport(requestData) {
-  //   try {
-  //     const customer = this.client.Customer({
-  //       login_customer_id: this.mccId,
-  //       customer_id: requestData?.customerId,
-  //       refresh_token: this.refreshToken,
-  //     });
-  //     const adGroupIds = [158722987630, 146179077352, 155417077878, 155417077678, 155417077918];
-  //     const assetGroupIds = [6477362957, 6530117625, 6525783182, 6525835894];
-
-  //     const performanceData = await customer.query(`
-  //       SELECT
-  //         ad_group.id,
-  //         ad_group.name,
-  //         metrics.clicks,
-  //         metrics.cost_micros
-  //       FROM ad_group
-  //       WHERE ad_group.id IN (${adGroupIds.join(",")})
-  //         AND segments.date BETWEEN '${requestData.startDate}' AND '${requestData.endDate}'
-  //     `);
-  //     console.log('performanceData==>', performanceData);
-
-  //     const assetperformanceData = await customer.query(`
-  //       SELECT
-  //         asset_group.id,
-  //         asset_group.name,
-  //         metrics.clicks,
-  //         metrics.cost_micros
-  //       FROM asset_group
-  //       WHERE asset_group.id IN (${assetGroupIds.join(",")})
-  //         AND segments.date BETWEEN '${requestData.startDate}' AND '${requestData.endDate}'
-  //     `);
-  //     console.log('asset performanceData==>', assetperformanceData);
-  //   } catch (error) {
-
-  //   }
-  // }
 
 
-
-  // AdwordService.js
   async performanceReport(requestData) {
     try {
       const customer = this.client.Customer({
         login_customer_id: this.mccId,
-        customer_id: requestData?.customerId,
+        customer_id: requestData.customerId,
         refresh_token: this.refreshToken,
       });
 
-      const {
-        startDate,
-        endDate,
-        adGroupIds = [158722987630, 146179077352, 155417077878, 155417077678, 155417077918],
-        assetGroupIds = [6477362957, 6530117625, 6525783182, 6525835894]
-      } = requestData;
+      const { startDate, endDate } = requestData;
 
-      const adGroupFilter = adGroupIds.length
-        ? `AND ad_group.id IN (${adGroupIds.join(",")})`
-        : "";
+      // ================= AD GROUP (WITH REVENUE) =================
+      const adGroups = await customer.report({
+        entity: "ad_group",
+        metrics: [
+          "metrics.clicks",
+          "metrics.cost_micros",
+          "metrics.conversions_value"   // 🔥 REVENUE
+        ],
+        segments: ["segments.date"],
+        attributes: [
+          "ad_group.id",
+          "ad_group.name",
+        ],
+        from_date: startDate,
+        to_date: endDate,
+      });
 
-      const assetGroupFilter = assetGroupIds.length
-        ? `AND asset_group.id IN (${assetGroupIds.join(",")})`
-        : "";
+      // ================= ASSET GROUP (WITH REVENUE) =================
+      const assetGroups = await customer.report({
+        entity: "asset_group",
+        metrics: [
+          "metrics.clicks",
+          "metrics.cost_micros",
+          "metrics.conversions_value"   // 🔥 REVENUE
+        ],
+        segments: ["segments.date"],
+        attributes: [
+          "asset_group.id",
+          "asset_group.name",
+        ],
+        from_date: startDate,
+        to_date: endDate,
+      });
 
-      const performanceData = await customer.query(`
-      SELECT
-        ad_group.id,
-        ad_group.name,
-        metrics.clicks,
-        metrics.cost_micros
-      FROM ad_group
-      WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
-      ${adGroupFilter}
-    `);
-
-      const assetPerformanceData = await customer.query(`
-      SELECT
-        asset_group.id,
-        asset_group.name,
-        metrics.clicks,
-        metrics.cost_micros
-      FROM asset_group
-      WHERE segments.date BETWEEN '${startDate}' AND '${endDate}'
-      ${assetGroupFilter}
-    `);
-
-      // is function se data return karo:
       return {
-        adGroups: performanceData,
-        assetGroups: assetPerformanceData,
+        adGroups,
+        assetGroups,
       };
+
     } catch (error) {
-      console.error('performanceReport error ==>', error);
+      console.error("performanceReport error =>", error);
       throw error;
     }
   }
+
+
 }

@@ -1,3 +1,4 @@
+import clientConnections from "../../../db/models/clientConnections";
 import clientDetails from "../../../db/models/clientDetails";
 
 export function storeDetailParameters() {
@@ -13,8 +14,9 @@ export function storeDetailParameters() {
 
 export async function salesParameters(data) {
   const timeUnit = data?.granularity === 'hourly' ? 'hour' : 'day';
+  ;
 
-  const exludedQuery = await getExcludedSalesChannelsQuery(data.clientId);
+  const exludedQuery = await getExcludedSalesChannelsQuery(data.connectionId);
   const query = `query {
                   shopifyqlQuery(query: "FROM sales SHOW 
                       gross_sales, 
@@ -41,25 +43,19 @@ export async function salesParameters(data) {
 }
 
 
-
-
-
-async function getExcludedSalesChannelsQuery(clientId) {
-  const data = await clientDetails.findById(clientId);
-  const shopifyFilter = data?.setting?.shopify_filter;
+async function getExcludedSalesChannelsQuery(connectionId) {
+  const data = await clientConnections.findById(connectionId);
+  const shopifyFilter = data?.filter;
   if (!shopifyFilter?.length) return '';
   return `WHERE ${shopifyFilter.map(filterVal => `${filterVal?.field} ${filterVal?.operator} '${filterVal?.value}'`).join(' AND ')}`;
 }
 
 
 
-
-
-
 export async function PerformanceParameters(data) {
-  const timeUnit = data?.granularity === 'hourly' ? 'hour' : 'day';
 
-  const exludedQuery = await getExcludedSalesChannelsQuery(data.clientId);
+
+  const exludedQuery = await getExcludedSalesChannelsQuery(data.connectionId);
   const query = `query {
   shopifyqlQuery(query: "FROM sales 
         SHOW 
@@ -76,11 +72,12 @@ export async function PerformanceParameters(data) {
           AND sales_channel NOT CONTAINS 'pos'
           AND sales_channel NOT CONTAINS 'point of sale'
           ${exludedQuery}
-        GROUP BY product_title, ${timeUnit}
-        TIMESERIES ${timeUnit}
+        GROUP BY product_title, day
+        TIMESERIES day
         WITH CURRENCY 'USD'
-        ORDER BY ${timeUnit} ASC
-        SINCE ${data?.startDate} UNTIL ${data?.endDate}"
+        ORDER BY day ASC
+        SINCE ${data?.startDate} UNTIL ${data?.endDate}
+        LIMIT 100000 OFFSET 0"
   ) {
     tableData {
       rows

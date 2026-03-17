@@ -32,3 +32,15 @@ export function preparePublisherListApiUrl(data){
 				`&END_DATE=${endDate}&SUBAID=${data.programId}&ResultFormat=JSON`;
 	return url;
 }
+
+export function groupDayWiseTransactionData(transactionData){
+	const result = transactionData.reduce((acc, item) => {
+						const transactionDate = dayjs(item.date_).format('YYYY-MM-DD');
+						if (!acc[transactionDate]) {
+							acc[transactionDate] = [];
+						}
+							acc[transactionDate].push(item);
+						return acc;
+					}, {});
+	return result;
+}

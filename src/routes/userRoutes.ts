@@ -9,13 +9,17 @@ import {
   getAllUsers,
   getUserById,
   deleteUserPermanently,
-  updateUserOverrides
+  updateUserOverrides,
+  getUsersByUserType
 } from '../controllers/userController';
 import { authMiddleware } from '../middleware/authMiddleware';
 // Multer configuration
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage })
 // Get all users (Admin only)
+router.get('/user-designation',
+  authMiddleware,
+  getUsersByUserType);
 router.get('/',
   authMiddleware,
    getAllUsers);

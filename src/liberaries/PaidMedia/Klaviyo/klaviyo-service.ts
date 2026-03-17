@@ -262,14 +262,14 @@ export class KlaviyoService {
     }
 
     private initializeSession(privateKey: string) {
-        // if (!this.session) {
+        if (!this.session) {
             const retry = new RetryWithExponentialBackoff({
                 retryCodes: [429, 503, 504, 524],
                 numRetries: 5,
                 maxInterval: 120,
             });
             this.session = new ApiKeySession(privateKey, retry);
-        // }
+        }
     }
 
     // ─── Date helpers ───────────────────────────────────────────
@@ -390,7 +390,7 @@ export class KlaviyoService {
                         },
                     },
                 };
-                console.log("fetchCampaignValuesReport requestBody==>",requestBody);
+                console.log("fetchCampaignValuesReport requestBody==>", requestBody);
                 const resp = await api.queryCampaignValues(requestBody, {
                     pageCursor,
                 });
@@ -405,8 +405,8 @@ export class KlaviyoService {
         try {
             await makeRequest(statsToTry);
         } catch (err: any) {
-            console.log("fetchCampaignValuesReport error==>",err?.response?.data?.errors);
-            console.log("requestData==>",requestData);
+            console.log("fetchCampaignValuesReport error==>", err?.response?.data?.errors);
+            console.log("requestData==>", requestData);
             const isConversionMetricError =
                 err &&
                 typeof err === 'object' &&
@@ -620,7 +620,7 @@ export class KlaviyoService {
                         },
                     },
                 };
-                console.log("fetchFlowSeriesReport requestBody==>",requestBody);
+                console.log("fetchFlowSeriesReport requestBody==>", requestBody);
                 const resp = await api.queryFlowSeries(requestBody, {
                     pageCursor,
                 });
@@ -640,8 +640,8 @@ export class KlaviyoService {
         try {
             await makeRequest(statsToTry);
         } catch (err: any) {
-            console.log("fetchFlowSeriesReport error==>",err?.response?.data?.errors);
-            console.log("requestData==>",requestData);
+            console.log("fetchFlowSeriesReport error==>", err?.response?.data?.errors);
+            console.log("requestData==>", requestData);
             const isConversionMetricError =
                 err &&
                 typeof err === 'object' &&
@@ -881,7 +881,7 @@ export class KlaviyoService {
             logger.info(`Klaviyo: Normalized ${flows.length} flows (grouped by flow_id)`);
             return flows;
         } catch (error) {
-            logger.error(error, 'Error in KlaviyoService.getFlowsWithMetrics');
+            // logger.error(error, 'Error in KlaviyoService.getFlowsWithMetrics');
             throw new Error('Error fetching Klaviyo flows with metrics');
         }
     }
@@ -963,7 +963,7 @@ export class KlaviyoService {
     async getMetrices(requestData) {
         try {
             if (!requestData?.privateKey) {
-             throw new Error("Klaviyo private key is required");
+                throw new Error("Klaviyo private key is required");
             }
             this.initializeSession(requestData.pvtkey as string);
             const metrices = new MetricsApi(this.session);
@@ -1069,12 +1069,19 @@ export class KlaviyoService {
 
 
     async getDraftCampaignsForCalendar(
-        requestData: { startDate: string; endDate: string },
+        requestData: { startDate: string; endDate: string, privateKey?: string },
         channel: 'email' | 'sms' = 'email',
         statuses: string[] = ['Draft'],
         enrichAudiences: boolean = false
     ): Promise<NormalizedCampaign[]> {
         try {
+
+            if (!requestData?.privateKey) {
+                throw new Error("Klaviyo private key is required");
+            }
+            this.initializeSession(requestData.privateKey as string);
+
+
             logger.info(`Klaviyo: Fetching ${statuses.join(', ')} campaigns for channel: ${channel}`);
 
             const rawCampaigns = await this.fetchCampaignListByChannel(

@@ -17,7 +17,8 @@ export function prepareReportBody(requestData){
                 "Spend",
                 "Clicks",
                 "Impressions",
-                "Conversions"
+                "Conversions",
+                "Revenue"
             ],
             Scope: {
                 "AccountIds": [
@@ -74,6 +75,7 @@ function extractAccountPerformanceByDate(data) {
   data.forEach(row => {
     const values = Object.values(row);
     const date = values[0];
+    // console.log("values==>",values);
 
     if (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
       result[date] = {
@@ -82,6 +84,7 @@ function extractAccountPerformanceByDate(data) {
         clicks: Number(values[2]),
         impressions: Number(values[3]),
         conversions: Number(values[4]),
+        revenue: Number(values[5]),
       };
     }
   });

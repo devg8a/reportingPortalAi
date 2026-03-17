@@ -19,8 +19,8 @@ export const getGoalsData = async (req, res) => {
         });
     } catch (error) {
         console.error('Get goals error:', error);
-        res.status(401).json({
-            status_code: 401,
+        res.status(422).json({
+            status_code: 422,
             success: false,
             message: 'Error fetching goals',
             data: error.message
@@ -246,8 +246,8 @@ export const syncAndSaveGoals = async (req, res) => {
         });
 
     } catch (error) {
-        res.status(401).json({
-            status_code: 401,
+        res.status(422).json({
+            status_code: 422,
             success: false,
             message: 'Error syncing data',
             data: { error: error.message }

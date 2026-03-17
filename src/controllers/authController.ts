@@ -19,15 +19,22 @@ export const loginStep1 = async (req, res) => {
     if (!email || !password) {
       return res.status(400).json({
         status_code: 400,
-        success    : false,
-        message    : 'Email and password are required',
-        data       : null
+        success: false,
+        message: 'Email and password are required',
+        data: null
       });
     }
 
     // Check if email exists in both collections
-    const userExists   = await User.findOne({ email });
-    const clientExists = await ClientContacts.findOne({ email });
+    const userExists = await User.findOne({ email });
+    const clientExists = await ClientContacts.findOne({ email })
+      .populate({
+        path: 'client_id',
+        select: 'role_id',
+        populate: {
+          path: 'role_id'
+        }
+      });
 
     // Determine login entity based on existence
     let loginEntity;
@@ -37,10 +44,10 @@ export const loginStep1 = async (req, res) => {
     if (userExists && clientExists) {
       if (login_as === 'client') {
         loginEntity = clientExists;
-        entityType  = 'client';
+        entityType = 'client';
       } else if (login_as === 'user') {
         loginEntity = userExists;
-        entityType  = 'user';
+        entityType = 'user';
       } else {
         return res.status(200).json({
           status_code: 200,
@@ -59,27 +66,27 @@ export const loginStep1 = async (req, res) => {
     }
     else if (clientExists && !userExists) {
       loginEntity = clientExists;
-      entityType  = 'client';
+      entityType = 'client';
     }
     else if (userExists && !clientExists) {
       loginEntity = userExists;
-      entityType  = 'user';
+      entityType = 'user';
     }
     else {
       return res.status(422).json({
         status_code: 422,
-        success    : false,
-        message    : 'Please try again with the correct email.',
-        data       : null
+        success: false,
+        message: 'Please try again with the correct email.',
+        data: null
       });
     }
 
     if (loginEntity.status !== 'active') {
       return res.status(422).json({
         status_code: 422,
-        success    : false,
-        message    : 'Account is inactive. Please contact Admin.',
-        data       : null
+        success: false,
+        message: 'Account is inactive. Please contact Admin.',
+        data: null
       });
     }
 
@@ -87,9 +94,9 @@ export const loginStep1 = async (req, res) => {
     if (!isPasswordValid) {
       return res.status(422).json({
         status_code: 422,
-        success    : false,
-        message    : 'Please try again or reset your password if you’ve forgotten it.',
-        data       : null
+        success: false,
+        message: 'Please try again or reset your password if you’ve forgotten it.',
+        data: null
       });
     }
 
@@ -99,27 +106,27 @@ export const loginStep1 = async (req, res) => {
       if (!otpResult.success) {
         return res.status(422).json({
           status_code: 422,
-          success    : false,
-          message    : 'Failed to send OTP',
-          data       : null
+          success: false,
+          message: 'Failed to send OTP',
+          data: null
         });
       }
 
       return res.status(200).json({
         status_code: 200,
-        success    : true,
-        message    : otpResult.message,
+        success: true,
+        message: otpResult.message,
         data: {
-          temp_token   : otpResult.temp_token,
-          requires_otp : true,
-          entity_type  : entityType,
-          user_id      : loginEntity._id
+          temp_token: otpResult.temp_token,
+          requires_otp: true,
+          entity_type: entityType,
+          user_id: loginEntity._id
         }
       });
     }
 
     let token;
-    let permissions  = {};
+    let permissions = {};
     let responseData = {};
 
     if (entityType === 'user') {
@@ -132,28 +139,28 @@ export const loginStep1 = async (req, res) => {
 
       token = jwt.sign(
         {
-          user_id    : loginEntity._id,
-          email      : loginEntity.email,
+          user_id: loginEntity._id,
+          email: loginEntity.email,
           entity_type: 'user',
-          role       : loginEntity.role_id,
+          role: loginEntity.role_id,
           permissions: permissions,
-          login_time : new Date(),
+          login_time: new Date(),
         },
         process.env.JWT_SECRET,
         { expiresIn: process.env.JWT_EXPIRES_IN }
       );
       const roleName = await Role.findById(loginEntity.role_id);
       responseData = {
-        id         : loginEntity._id,
-        first_name : loginEntity.first_name,
-        last_name  : loginEntity.last_name,
-        email      : loginEntity.email,
+        id: loginEntity._id,
+        first_name: loginEntity.first_name,
+        last_name: loginEntity.last_name,
+        email: loginEntity.email,
         role: {
           role_id: loginEntity.role_id,
           name: roleName?.name,
         },
-        two_step_enabled : loginEntity.two_step_enabled,
-        overrides        : loginEntity.overrides || {}
+        two_step_enabled: loginEntity.two_step_enabled,
+        overrides: loginEntity.overrides || {}
       };
     } else {
       try {
@@ -163,43 +170,51 @@ export const loginStep1 = async (req, res) => {
         permissions = {};
       }
 
+      const clientDetails = await ClientDetails.findById(loginEntity.client_id)
+        .select('-dashboardStats')
+        .populate('role_id', 'name permissions');
+
       token = jwt.sign(
         {
-          client_contact_id : loginEntity._id,
-          client_id         : loginEntity.client_id,
-          email             : loginEntity.email,
-          entity_type       : 'client',
-          permissions       : permissions,
-          login_time        : new Date(),
+          user_id: loginEntity._id,
+          client_contact_id: loginEntity._id,    // ✅ ADD THIS LINE
+          client_id: loginEntity.client_id,
+          email: loginEntity.email,
+          entity_type: 'client',
+          permissions: permissions,
+          login_time: new Date(),
         },
         process.env.JWT_SECRET,
-        { expiresIn : process.env.JWT_EXPIRES_IN }
+        { expiresIn: process.env.JWT_EXPIRES_IN }
       );
 
-      const clientDetails = await ClientDetails.findById(loginEntity.client_id).select('-dashboardStats');
+
       responseData = {
-        id              : loginEntity._id,
-        first_name      : loginEntity.first_name,
-        last_name       : loginEntity.last_name,
-        email           : loginEntity.email,
-        entity_type     : 'client',
-        is_main_contact : loginEntity.is_main_contact,
-        client_details  : clientDetails,
-        overrides       : loginEntity.overrides || {}
+        id: loginEntity._id,
+        first_name: loginEntity.first_name,
+        last_name: loginEntity.last_name,
+        email: loginEntity.email,
+        entity_type: 'client',
+        is_main_contact: loginEntity.is_main_contact,
+        role: {
+          role_id: clientDetails?.role_id?._id
+        },
+        client_details: clientDetails,
+        overrides: loginEntity.overrides || {}
       };
     }
 
     await createLog(loginEntity._id, 'login', {
-      email            : loginEntity.email,
-      entity_type      : entityType,
-      two_step_enabled : entityType === 'user' ? loginEntity.two_step_enabled : false,
-      status           : 'success'
+      email: loginEntity.email,
+      entity_type: entityType,
+      two_step_enabled: entityType === 'user' ? loginEntity.two_step_enabled : false,
+      status: 'success'
     }, req);
 
     return res.status(200).json({
-      status_code : 200,
-      success     : true,
-      message     : 'Login successful',
+      status_code: 200,
+      success: true,
+      message: 'Login successful',
       data: {
         token,
         user: responseData,
@@ -210,10 +225,10 @@ export const loginStep1 = async (req, res) => {
   } catch (error) {
     console.error('Login error:', error);
     return res.status(500).json({
-      status_code : 500,
-      success     : false,
-      message     : 'Internal server error',
-      data        : null
+      status_code: 500,
+      success: false,
+      message: 'Internal server error',
+      data: null
     });
   }
 };
@@ -225,9 +240,9 @@ export const verifyLoginOTP = async (req, res) => {
     if (!temp_token || !otp) {
       return res.status(400).json({
         status_code: 400,
-        success    : false,
-        message    : 'Temp token and OTP are required',
-        data       : null
+        success: false,
+        message: 'Temp token and OTP are required',
+        data: null
       });
     }
 
@@ -236,9 +251,9 @@ export const verifyLoginOTP = async (req, res) => {
     if (!otpResult.success) {
       return res.status(422).json({
         status_code: 422,
-        success    : false,
-        message    : otpResult.message,
-        data       : null
+        success: false,
+        message: otpResult.message,
+        data: null
       });
     }
 
@@ -255,15 +270,15 @@ export const verifyLoginOTP = async (req, res) => {
       } else {
         return res.status(422).json({
           status_code: 422,
-          success    : false,
-          message    : 'Account not found',
-          data       : null
+          success: false,
+          message: 'Account not found',
+          data: null
         });
       }
     }
     let token;
     let permissions = {};
-    let userData    = {};
+    let userData = {};
     if (actualEntityType === 'user') {
       // User login with OTP - get permissions using new method
       try {
@@ -275,28 +290,28 @@ export const verifyLoginOTP = async (req, res) => {
 
       token = jwt.sign(
         {
-          user_id     : loginEntity._id,
-          email       : loginEntity.email,
-          entity_type : 'user',
-          role        : loginEntity.role_id,
-          permissions : permissions,
-          login_time  : new Date(),
+          user_id: loginEntity._id,
+          email: loginEntity.email,
+          entity_type: 'user',
+          role: loginEntity.role_id,
+          permissions: permissions,
+          login_time: new Date(),
         },
         process.env.JWT_SECRET,
         { expiresIn: process.env.JWT_EXPIRES_IN }
       );
       const roleName = await Role.findById(loginEntity.role_id);
       userData = {
-        id         : loginEntity._id,
-        first_name : loginEntity.first_name,
-        last_name  : loginEntity.last_name,
-        email      : loginEntity.email,
+        id: loginEntity._id,
+        first_name: loginEntity.first_name,
+        last_name: loginEntity.last_name,
+        email: loginEntity.email,
         role: {
-          role_id : loginEntity.role_id,
-          name    : roleName?.name,
+          role_id: loginEntity.role_id,
+          name: roleName?.name,
         },
-        two_step_enabled : loginEntity.two_step_enabled,
-        overrides        : loginEntity.overrides || {}
+        two_step_enabled: loginEntity.two_step_enabled,
+        overrides: loginEntity.overrides || {}
       };
     } else {
       // Client login with OTP - use overrides as permissions
@@ -309,42 +324,45 @@ export const verifyLoginOTP = async (req, res) => {
 
       token = jwt.sign(
         {
-          client_contact_id : loginEntity._id,
-          client_id         : loginEntity.client_id,
-          email             : loginEntity.email,
-          entity_type       : 'client',
-          permissions       : permissions,
-          login_time        : new Date(),
+          client_contact_id: loginEntity._id,
+          client_id: loginEntity.client_id,
+          email: loginEntity.email,
+          entity_type: 'client',
+          permissions: permissions,
+          login_time: new Date(),
         },
         process.env.JWT_SECRET,
         { expiresIn: process.env.JWT_EXPIRES_IN }
       );
 
-      const clientDetails = await ClientDetails.findById(loginEntity.client_id).select('-dashboardStats');
+      const clientDetails = await ClientDetails.findById(loginEntity.client_id._id) // ✅ Use ._id
+        .select('-dashboardStats')
+        .populate('role_id', 'name permissions');
+
       userData = {
-        id              : loginEntity._id,
-        first_name      : loginEntity.first_name,
-        last_name       : loginEntity.last_name,
-        email           : loginEntity.email,
-        entity_type     : 'client',
-        is_main_contact : loginEntity.is_main_contact,
-        client_details  : clientDetails,
-        overrides       : loginEntity.overrides || {}
+        id: loginEntity._id,
+        first_name: loginEntity.first_name,
+        last_name: loginEntity.last_name,
+        email: loginEntity.email,
+        entity_type: 'client',
+        is_main_contact: loginEntity.is_main_contact,
+        client_details: clientDetails,
+        overrides: loginEntity.overrides || {}
       };
     }
 
     // Log OTP verified login
     await createLog(loginEntity._id, 'login', {
-      email       : loginEntity.email,
-      method      : 'otp_verified',
-      entity_type : actualEntityType,
-      status      : 'success'
+      email: loginEntity.email,
+      method: 'otp_verified',
+      entity_type: actualEntityType,
+      status: 'success'
     }, req);
 
     return res.status(200).json({
-      status_code : 200,
-      success     : true,
-      message     : 'Login successful',
+      status_code: 200,
+      success: true,
+      message: 'Login successful',
       data: {
         token,
         user: userData,
@@ -356,9 +374,9 @@ export const verifyLoginOTP = async (req, res) => {
     console.error('OTP verification error:', error);
     return res.status(500).json({
       status_code: 500,
-      success    : false,
-      message    : 'Internal server error',
-      data       : null
+      success: false,
+      message: 'Internal server error',
+      data: null
     });
   }
 };
@@ -368,9 +386,9 @@ export const getCurrentUser = async (req, res) => {
     if (!req.user) {
       return res.status(422).json({
         status_code: 422,
-        success    : false,
-        message    : 'Unauthenticated: Authentication required',
-        data       : null
+        success: false,
+        message: 'Unauthenticated: Authentication required',
+        data: null
       });
     }
 
@@ -384,10 +402,10 @@ export const getCurrentUser = async (req, res) => {
 
       if (!user) {
         return res.status(422).json({
-          status_code : 422,
-          success     : false,
-          message     : 'User not found',
-          data        : null
+          status_code: 422,
+          success: false,
+          message: 'User not found',
+          data: null
         });
       }
 
@@ -405,10 +423,10 @@ export const getCurrentUser = async (req, res) => {
 
       if (!clientContact) {
         return res.status(422).json({
-          status_code : 422,
-          success     : false,
-          message     : 'Client contact not found',
-          data        : null
+          status_code: 422,
+          success: false,
+          message: 'Client contact not found',
+          data: null
         });
       }
 
@@ -418,26 +436,26 @@ export const getCurrentUser = async (req, res) => {
 
       responseData = {
         ...clientContact.toObject(),
-        client_details : clientDetails,
-        permissions    : permissions,
-        overrides      : clientContact.overrides || {},
-        entity_type    : 'client'
+        client_details: clientDetails,
+        permissions: permissions,
+        overrides: clientContact.overrides || {},
+        entity_type: 'client'
       };
     }
 
     return res.status(200).json({
-      status_code : 200,
-      success     : true,
-      message     : 'User data has been fetched successfully',
-      data        : responseData
+      status_code: 200,
+      success: true,
+      message: 'User data has been fetched successfully',
+      data: responseData
     });
   } catch (error) {
     console.error('Get current user error:', error);
     return res.status(500).json({
-      status_code : 500,
-      success     : false,
-      message     : 'Internal server error',
-      data        : error
+      status_code: 500,
+      success: false,
+      message: 'Internal server error',
+      data: error
     });
   }
 };
@@ -449,10 +467,10 @@ export const forgotPassword = async (req, res) => {
 
     if (!email) {
       return res.status(400).json({
-        status_code : 400,
-        success     : false,
-        message     : 'Email is required',
-        data        : null
+        status_code: 400,
+        success: false,
+        message: 'Email is required',
+        data: null
       });
     }
 
@@ -463,23 +481,23 @@ export const forgotPassword = async (req, res) => {
     // If email doesn't exist in either collection
     if (!user && !client) {
       return res.status(422).json({
-        status_code : 422,
-        success     : false,
-        message     : 'No account found with this email',
-        data        : null
+        status_code: 422,
+        success: false,
+        message: 'No account found with this email',
+        data: null
       });
     }
 
     // Determine entity type
     let entityType = '';
-    let userId     = null;
+    let userId = null;
 
     if (user) {
       entityType = 'user';
-      userId     = user._id;
+      userId = user._id;
     } else {
       entityType = 'client';
-      userId     = client._id;
+      userId = client._id;
     }
 
     // Generate unique token
@@ -493,7 +511,7 @@ export const forgotPassword = async (req, res) => {
     await ForgotPasswordToken.deleteMany({
       email,
       entity_type: entityType,
-      purpose    : 'reset_password'
+      purpose: 'reset_password'
     });
 
     // Save new token
@@ -515,9 +533,9 @@ export const forgotPassword = async (req, res) => {
     const emailSent = await sendPasswordResetEmail(email, resetLink);
 
     return res.status(200).json({
-      status_code : 200,
-      success     : true,
-      message     : emailSent
+      status_code: 200,
+      success: true,
+      message: emailSent
         ? 'We’ve sent a password reset link to your email address.'
         : 'Failed to send email, but reset link generated',
       data: {
@@ -529,10 +547,10 @@ export const forgotPassword = async (req, res) => {
   } catch (error) {
     console.error('Forgot password error:', error);
     return res.status(500).json({
-      status_code : 500,
-      success     : false,
-      message     : 'Internal server error',
-      data        : null
+      status_code: 500,
+      success: false,
+      message: 'Internal server error',
+      data: null
     });
   }
 };
@@ -544,10 +562,10 @@ export const verifyResetToken = async (req, res) => {
 
     if (!token) {
       return res.status(400).json({
-        status_code : 400,
-        success     : false,
-        message     : 'Token is required',
-        data        : null
+        status_code: 400,
+        success: false,
+        message: 'Token is required',
+        data: null
       });
     }
 
@@ -559,10 +577,10 @@ export const verifyResetToken = async (req, res) => {
 
     if (!resetToken) {
       return res.status(422).json({
-        status_code : 422,
-        success     : false,
-        message     : 'Invalid or expired reset token',
-        data        : null
+        status_code: 422,
+        success: false,
+        message: 'Invalid or expired reset token',
+        data: null
       });
     }
 
@@ -570,17 +588,17 @@ export const verifyResetToken = async (req, res) => {
     if (new Date() > resetToken.expires_at) {
       await ForgotPasswordToken.deleteOne({ token, purpose: 'reset_password' });
       return res.status(422).json({
-        status_code : 422,
-        success     : false,
-        message     : 'Reset token has expired',
-        data        : null
+        status_code: 422,
+        success: false,
+        message: 'Reset token has expired',
+        data: null
       });
     }
 
     return res.status(200).json({
-      status_code : 200,
-      success     : true,
-      message     : 'Token is valid',
+      status_code: 200,
+      success: true,
+      message: 'Token is valid',
       data: {
         email: resetToken.email,
         entity_type: resetToken.entity_type
@@ -590,10 +608,10 @@ export const verifyResetToken = async (req, res) => {
   } catch (error) {
     console.error('Verify token error:', error);
     return res.status(500).json({
-      status_code : 500,
-      success     : false,
-      message     : 'Internal server error',
-      data        : null
+      status_code: 500,
+      success: false,
+      message: 'Internal server error',
+      data: null
     });
   }
 };
@@ -604,10 +622,10 @@ export const resetPassword = async (req, res) => {
     // Check if req.body exists
     if (!req.body) {
       return res.status(400).json({
-        status_code : 400,
-        success     : false,
-        message     : 'Request body is missing',
-        data        : null
+        status_code: 400,
+        success: false,
+        message: 'Request body is missing',
+        data: null
       });
     }
 
@@ -615,19 +633,19 @@ export const resetPassword = async (req, res) => {
 
     if (!token || !newPassword || !confirmPassword) {
       return res.status(400).json({
-        status_code : 400,
-        success     : false,
-        message     : 'Token, new password, and confirm password are required',
-        data        : null
+        status_code: 400,
+        success: false,
+        message: 'Token, new password, and confirm password are required',
+        data: null
       });
     }
 
     if (newPassword !== confirmPassword) {
       return res.status(422).json({
-        status_code : 422,
-        success     : false,
-        message     : 'Passwords do not match',
-        data        : null
+        status_code: 422,
+        success: false,
+        message: 'Passwords do not match',
+        data: null
       });
     }
 
@@ -639,10 +657,10 @@ export const resetPassword = async (req, res) => {
 
     if (!resetToken) {
       return res.status(422).json({
-        status_code : 422,
-        success     : false,
-        message     : 'Invalid or expired reset token',
-        data        : null
+        status_code: 422,
+        success: false,
+        message: 'Invalid or expired reset token',
+        data: null
       });
     }
 
@@ -650,10 +668,10 @@ export const resetPassword = async (req, res) => {
     if (new Date() > resetToken.expires_at) {
       await ForgotPasswordToken.deleteOne({ token, purpose: 'reset_password' });
       return res.status(422).json({
-        status_code : 422,
-        success     : false,
-        message     : 'Reset token has expired',
-        data        : null
+        status_code: 422,
+        success: false,
+        message: 'Reset token has expired',
+        data: null
       });
     }
     // Hash new password
@@ -675,15 +693,15 @@ export const resetPassword = async (req, res) => {
 
     // Create log
     await createLog(resetToken.user_id, 'password_reset', {
-      email       : resetToken.email,
-      entity_type : resetToken.entity_type,
-      status      : 'success'
+      email: resetToken.email,
+      entity_type: resetToken.entity_type,
+      status: 'success'
     }, req);
 
     return res.status(200).json({
-      status_code : 200,
-      success     : true,
-      message     : 'You can now log in with your new password.',
+      status_code: 200,
+      success: true,
+      message: 'You can now log in with your new password.',
       data: {
         redirect_to: '/login'
       }
@@ -692,10 +710,10 @@ export const resetPassword = async (req, res) => {
   } catch (error) {
     console.error('Reset password error:', error);
     return res.status(500).json({
-      status_code : 500,
-      success     : false,
-      message     : 'Internal server error',
-      data        : null
+      status_code: 500,
+      success: false,
+      message: 'Internal server error',
+      data: null
     });
   }
 };
@@ -707,10 +725,10 @@ export const checkPasswordStrength = async (req, res) => {
 
     if (!password) {
       return res.status(400).json({
-        status_code : 400,
-        success     : false,
-        message     : 'Password is required',
-        data        : null
+        status_code: 400,
+        success: false,
+        message: 'Password is required',
+        data: null
       });
     }
 
@@ -725,9 +743,9 @@ export const checkPasswordStrength = async (req, res) => {
     const isStrong = Object.values(checks).every(Boolean);
 
     return res.status(200).json({
-      status_code : 200,
-      success     : true,
-      message     : isStrong ? 'Password is strong' : 'Password strength check completed',
+      status_code: 200,
+      success: true,
+      message: isStrong ? 'Password is strong' : 'Password strength check completed',
       data: {
         is_strong: isStrong,
         checks,
@@ -744,10 +762,10 @@ export const checkPasswordStrength = async (req, res) => {
   } catch (error) {
     console.error('Password check error:', error);
     return res.status(500).json({
-      status_code : 500,
-      success     : false,
-      message     : 'Internal server error',
-      data        : null
+      status_code: 500,
+      success: false,
+      message: 'Internal server error',
+      data: null
     });
   }
 };
@@ -759,10 +777,10 @@ export const resendOTP = async (req, res) => {
     // Check if either temp_token or email is provided
     if (!temp_token && !email) {
       return res.status(400).json({
-        status_code : 400,
-        success     : false,
-        message     : 'Either temp_token or email is required',
-        data        : null
+        status_code: 400,
+        success: false,
+        message: 'Either temp_token or email is required',
+        data: null
       });
     }
 
@@ -776,10 +794,10 @@ export const resendOTP = async (req, res) => {
         targetEmail = decoded.email;
       } catch (error) {
         return res.status(422).json({
-          status_code : 422,
-          success     : false,
-          message     : 'Invalid or expired temp token',
-          data        : null
+          status_code: 422,
+          success: false,
+          message: 'Invalid or expired temp token',
+          data: null
         });
       }
     }
@@ -787,10 +805,10 @@ export const resendOTP = async (req, res) => {
     // Check if email exists in database
     if (!targetEmail) {
       return res.status(400).json({
-        status_code : 400,
-        success     : false,
-        message     : 'Email is required',
-        data        : null
+        status_code: 400,
+        success: false,
+        message: 'Email is required',
+        data: null
       });
     }
 
@@ -800,10 +818,10 @@ export const resendOTP = async (req, res) => {
 
     if (!user && !client) {
       return res.status(422).json({
-        status_code : 404,
-        success     : false,
-        message     : 'Account not found',
-        data        : null
+        status_code: 404,
+        success: false,
+        message: 'Account not found',
+        data: null
       });
     }
 
@@ -818,20 +836,20 @@ export const resendOTP = async (req, res) => {
     // Check if account is active
     if (loginEntity.status !== 'active') {
       return res.status(422).json({
-        status_code : 422,
-        success     : false,
-        message     : 'Account is inactive',
-        data        : null
+        status_code: 422,
+        success: false,
+        message: 'Account is inactive',
+        data: null
       });
     }
 
     // Check if user has two-step enabled (only for users)
     if (actualEntityType === 'user' && !user?.two_step_enabled) {
       return res.status(422).json({
-        status_code : 422,
-        success     : false,
-        message     : 'Two-step verification is not enabled for this account',
-        data        : null
+        status_code: 422,
+        success: false,
+        message: 'Two-step verification is not enabled for this account',
+        data: null
       });
     }
     // Create and send new OTP
@@ -839,24 +857,24 @@ export const resendOTP = async (req, res) => {
 
     if (!otpResult.success) {
       return res.status(422).json({
-        status_code : 422,
-        success     : false,
-        message     : 'Failed to send OTP. Please try again.',
-        data        : null
+        status_code: 422,
+        success: false,
+        message: 'Failed to send OTP. Please try again.',
+        data: null
       });
     }
 
     // Log the OTP resend event
     await createLog(loginEntity._id, 'otp_resend', {
-      email       : targetEmail,
-      entity_type : actualEntityType,
-      status      : 'success'
+      email: targetEmail,
+      entity_type: actualEntityType,
+      status: 'success'
     }, req);
 
     return res.status(200).json({
-      status_code : 200,
-      success     : true,
-      message     : 'OTP has been resent successfully',
+      status_code: 200,
+      success: true,
+      message: 'OTP has been resent successfully',
       data: {
         temp_token: otpResult.temp_token,
         requires_otp: true,
@@ -869,10 +887,10 @@ export const resendOTP = async (req, res) => {
   } catch (error) {
     console.error('Resend OTP error:', error);
     return res.status(500).json({
-      status_code : 500,
-      success     : false,
-      message     : 'Internal server error',
-      data        : null
+      status_code: 500,
+      success: false,
+      message: 'Internal server error',
+      data: null
     });
   }
 };

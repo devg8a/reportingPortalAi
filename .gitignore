@@ -2,3 +2,5 @@ node_modules/
 dist/
 .env
 service_account_credentials.json
+scripts/
+src/scripts/

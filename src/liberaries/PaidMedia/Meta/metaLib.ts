@@ -79,6 +79,12 @@ export class MetaService {
             const insightsData = await account.getInsights(fields, params);
             const result = buildDaywiseMetrics(insightsData);
 
+            // // 🔍 DEBUG: Log action values
+            // if (insightsData && insightsData.length > 0) {
+            //     console.log("🔍 Meta Account Data [action_values]:", JSON.stringify(insightsData[0].action_values, null, 2));
+            // }
+            // console.log(result, "result")
+
             if (requestData?.granularity !== "hourly") {
                 await captureToCentralStorage(result, requestData.clientId, requestData.connectionId, "meta");
             }
@@ -86,72 +92,104 @@ export class MetaService {
         } catch (error) {
             await ErrorLogs.insertOne({
                 client_id: requestData?.clientId,
-                account_id: requestData?.accountId,
-                network: 'meta',
+                connection_id: requestData?.connectionId,
+                network: "meta",
                 start_date: requestData?.startDate,
                 end_date: requestData?.endDate,
                 error: JSON.stringify(error)
             });
             logger.error(error, 'Meta Account Data Error: ');
+            throw error;
         }
     }
 
 
     async getMetaAdData(requestData) {
         try {
-            // console.log(requestData, "requestData")
             this.FacebookAdsApi.init(process.env.META_ACCESS_TOKEN);
+
             const AdAccount = bizSdk.AdAccount;
-            const account = new AdAccount(`act_${requestData?.accountId}`);
+            const account = new AdAccount(`act_${requestData.accountId}`);
+
             const fields = [
                 'campaign_name',
                 'adset_name',
                 'ad_name',
                 'ad_id',
                 'spend',
-                'action_values'
+                'action_values',
+                'date_start',
+                'date_stop'
             ];
 
+            const filtering: any[] = [
+                {
+                    field: 'action_type',
+                    operator: 'IN',
+                    value: ['omni_purchase']
+                }
+            ];
+
+            // Optional: filter by ad name substring (for special client)
+            if (requestData.nameContains) {
+                filtering.push({
+                    field: 'ad.name',
+                    operator: 'CONTAIN',
+                    value: requestData.nameContains
+                });
+            }
+
+            // Optional: ad.id filter (default: ON, but special client will skip)
+            if (!requestData.skipAdIdFilter) {
+                filtering.push({
+                    field: 'ad.id',
+                    operator: 'IN',
+                    value: requestData?.adId ? requestData?.adId : []
+                });
+            }
+
             const params = {
-                time_range: { since: requestData?.startDate, until: requestData?.endDate },
+                time_range: {
+                    since: requestData.startDate,
+                    until: requestData.endDate
+                },
                 level: 'ad',
+
+                time_increment: 1,
+
                 action_attribution_windows: [
                     '1d_view',
                     '7d_click',
                 ],
-                filtering: [
-                    {
-                        field: 'action_type',
-                        operator: 'IN',
-                        value: ['omni_purchase']
-                    },
-                    {
-                        field: 'ad.id',
-                        operator: 'IN',
-                        value: requestData.adId
-                    },
-                ]
+
+                filtering
             };
-            // console.log(params, "params")
+
             const insights = await account.getInsights(fields, params);
-            // console.log(insights, "metaresss2222222222222222222222")
-            const result = insights.map((data: any) => ({
-                campaign_name: data?.campaign_name,
-                adset_name: data?.adset_name,
-                ad_id: data?.ad_id,
-                ad_name: data?.ad_name,
-                spend: data?.spend,
-                date_start: data?.date_start,
-                action_values: data?.action_values,
-                date_stop: data?.date_stop,
+            // console.log(insights, "insights")
+
+            // 🔍 DEBUG: Log action values for Ads
+            // if (insights && insights.length > 0) {
+            //     console.log("🔍 Meta Ad Data [action_values sample]:", JSON.stringify(insights[0].action_values, null, 2));
+            // }
+
+            return insights.map((data: any) => ({
+                campaign_name: data.campaign_name,
+                adset_name: data.adset_name,
+                ad_name: data.ad_name,
+                ad_id: data.ad_id,
+                spend: Number(data.spend || 0),
+                date_start: data.date_start,   // 👈 DAILY
+                date_stop: data.date_stop,
+                action_values: data.action_values || []
             }));
-            // console.log(result, "metaresss")
-            return result;
+
         } catch (error) {
             console.error('Meta API Error:', error);
             throw error;
         }
     }
+
 
     async fetchNewAds(requestData) {
         const startDate = new Date(requestData.startDate).getTime() / 1000;

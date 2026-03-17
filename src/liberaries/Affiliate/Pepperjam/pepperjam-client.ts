@@ -6,13 +6,14 @@ export async function triggerApi(url: string) {
       method: 'GET',
       headers: { Accept: "application/json" },
     });
-    // console.log('pepperjam triggerApi==> ',response)
+    // console.log("Pepperjam Trigger API==>",response);
     return {
       headers: response?.headers,
       status: response?.status,
       data: response?.data?.data,
     };
   }catch(error){
-    console.log('API call error==>',error);
+    // console.log("error==>",error);
+    throw error?.response;
   }
 }

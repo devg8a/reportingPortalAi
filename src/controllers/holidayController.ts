@@ -2,16 +2,16 @@ import Holiday from '../db/models/holiday';
 
 export const getAllHolidays = async (req, res) => {
   try {
-    const { 
-      searchText, 
-      status, 
-      sortBy = 'start_date', 
-      sortOrder = 'asc',
-      page = 1, 
-      limit = 10 
+    const {
+      searchText,
+      status,
+      sortBy = 'createdAt', 
+      sortOrder = 'desc',    
+      page = 1,
+      limit = 10
     } = req.query;
 
-    // filter object
+    // filter object for paginated results
     const filter: Record<string, any> = {};
 
     if (status === 'active' || status === 'inactive') {
@@ -27,38 +27,61 @@ export const getAllHolidays = async (req, res) => {
     const sort: Record<string, any> = {};
     sort[sortBy as string] = sortOrder === 'asc' ? 1 : -1;
 
-    const holidays = await Holiday.find(filter)
-      .populate('name start_date end_date prev_start_date prev_end_date')
+    // Build base query
+    let query = Holiday.find(filter)
+      .populate('name start_date end_date prev_start_date prev_end_date status createdAt');
+
+    // For name sorting, use case-insensitive collation so A/a/z/Z are ordered properly
+    if ((sortBy as string) === 'name') {
+      query = query.collation({ locale: 'en', strength: 2 });
+    }
+
+    const holidays = await query
       .sort(sort)
       .skip(skip)
       .limit(parseInt(limit as string));
 
     const formattedHolidays = holidays.map((holiday: any) => {
       const formatDate = (date: string) => {
-        return new Date(date).toISOString().split('T')[0]; 
+        if (!date) return null;
+
+        const d = new Date(date);
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        const year = d.getFullYear();
+
+        return `${month}/${day}/${year}`;
       };
 
       return {
-        ...holiday.toObject(), 
+        ...holiday.toObject(),
         start_date: formatDate(holiday.start_date),
         end_date: formatDate(holiday.end_date),
         prev_start_date: formatDate(holiday.prev_start_date),
-        prev_end_date: formatDate(holiday.prev_end_date)
+        prev_end_date: formatDate(holiday.prev_end_date),
+        createdAt: formatDate(holiday.createdAt)
       };
     });
 
-    const totalHolidays = await Holiday.countDocuments(filter);
-    const totalPages = Math.ceil(totalHolidays / parseInt(limit as string));
+    const filteredTotal = await Holiday.countDocuments(filter);
+    const totalPages = Math.ceil(filteredTotal / parseInt(limit as string));
+
+    const activeCount = await Holiday.countDocuments({ status: 'active' });
+    const inactiveCount = await Holiday.countDocuments({ status: 'inactive' });
+    
+    const totalAllHolidays = await Holiday.countDocuments({});
 
     return res.status(200).json({
       status_code: 200,
       success: true,
       message: 'Holidays has been fetched successfully',
       data: {
-        holidays: formattedHolidays,  
+        holidays: formattedHolidays,
         pagination: {
           count: formattedHolidays.length,
-          total: totalHolidays,
+          active: activeCount,
+          inactive: inactiveCount,
+          total: totalAllHolidays, 
           page: parseInt(page as string),
           totalPages,
           limit: parseInt(limit as string)
@@ -66,8 +89,8 @@ export const getAllHolidays = async (req, res) => {
         filters: {
           searchText: searchText || null,
           status: status || null,
-          sortBy,
-          sortOrder
+          sortBy: sortBy || 'createdAt',
+          sortOrder: sortOrder || 'desc'
         }
       }
     });
@@ -119,7 +142,7 @@ export const createHoliday = async (req, res) => {
     if (prev_start_date && prev_end_date) {
       prevStartDate = new Date(prev_start_date);
       prevEndDate = new Date(prev_end_date);
-      
+
       if (prevEndDate < prevStartDate) {
         return res.status(422).json({
           status_code: 422,
@@ -128,7 +151,7 @@ export const createHoliday = async (req, res) => {
           data: null
         });
       }
-      
+
       const currentYear = startDate.getFullYear();
       const prevYear = prevStartDate.getFullYear();
       if (currentYear === prevYear) {
@@ -200,7 +223,7 @@ export const getHolidayById = async (req, res) => {
     const { holidayId } = req.params;
 
     const holiday = await Holiday.findById(holidayId)
-      .populate('name start_date end_date prev_start_date prev_end_date');
+      .populate('name start_date end_date prev_start_date prev_end_date status ordering');
 
     if (!holiday) {
       return res.status(422).json({
@@ -217,7 +240,8 @@ export const getHolidayById = async (req, res) => {
       start_date: formatDate(holiday.start_date),
       end_date: formatDate(holiday.end_date),
       prev_start_date: formatDate(holiday.prev_start_date),
-      prev_end_date: formatDate(holiday.prev_end_date)
+      prev_end_date: formatDate(holiday.prev_end_date),
+      createdAt: formatDate(holiday.createdAt)
     };
     return res.status(200).json({
       status_code: 200,
@@ -258,7 +282,7 @@ export const updateHoliday = async (req, res) => {
     if (updateData.start_date || updateData.end_date) {
       startDate = updateData.start_date ? new Date(updateData.start_date) : holiday.start_date;
       endDate = updateData.end_date ? new Date(updateData.end_date) : holiday.end_date;
-      
+
       if (endDate < startDate) {
         return res.status(422).json({
           status_code: 422,
@@ -272,11 +296,11 @@ export const updateHoliday = async (req, res) => {
     let prevStartDate: Date | null = holiday.prev_start_date;
     let prevEndDate: Date | null = holiday.prev_end_date;
     if (updateData.prev_start_date || updateData.prev_end_date) {
-      prevStartDate = updateData.prev_start_date ? 
+      prevStartDate = updateData.prev_start_date ?
         new Date(updateData.prev_start_date) : holiday.prev_start_date;
-      prevEndDate = updateData.prev_end_date ? 
+      prevEndDate = updateData.prev_end_date ?
         new Date(updateData.prev_end_date) : holiday.prev_end_date;
-      
+
       if (prevStartDate && prevEndDate && prevEndDate < prevStartDate) {
         return res.status(422).json({
           status_code: 422,
@@ -288,7 +312,7 @@ export const updateHoliday = async (req, res) => {
       if (prevStartDate && prevEndDate) {
         const currentYear = startDate.getFullYear();
         const prevYear = prevStartDate.getFullYear();
-        
+
         if (currentYear === prevYear) {
           return res.status(422).json({
             status_code: 422,
@@ -300,9 +324,10 @@ export const updateHoliday = async (req, res) => {
       }
     }
 
-    if (updateData.name || updateData.start_date || updateData.end_date || 
-        updateData.prev_start_date || updateData.prev_end_date) {
+    if (updateData.name || updateData.ordering ||  updateData.start_date || updateData.end_date ||
+      updateData.prev_start_date || updateData.prev_end_date) {
       const name = updateData.name || holiday.name;
+      const ordering = updateData.ordering || holiday.ordering;
 
       const overlappingConditions: any[] = [
         { start_date: { $lte: endDate }, end_date: { $gte: startDate } }

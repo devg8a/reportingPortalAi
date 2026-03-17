@@ -25,9 +25,12 @@ export const getAllModules = async (req, res) => {
   try {
     const token = req.header('Authorization')?.replace('Bearer ', '');
     const decoded = jwt.verify(token, process.env.JWT_SECRET) as any;
-    const freshPermissions = await getFinalPermissions(decoded.user_id);
+    console.log("decoded", decoded)
+    const role_id = decoded.client_id?.role_id?._id || decoded.role;
+    console.log(role_id, "role_id")
+    const freshPermissions = await getFinalPermissions(decoded.user_id, decoded.entity_type, role_id,);
     const userPermissions = freshPermissions || {};
-    
+
     const modules = await Module.find().sort({ order: 1 });
     const processModules = (moduleList) => {
       return moduleList.map(module => {
@@ -352,7 +355,7 @@ export const deleteModule = async (req, res) => {
       status_code: status_code,
       success: false,
       message: error.message,
-      data:'Error deleting Module'
+      data: 'Error deleting Module'
     });
   }
 };
