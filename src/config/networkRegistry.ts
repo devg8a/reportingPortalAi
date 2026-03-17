@@ -85,7 +85,9 @@ export const NETWORK_REGISTRY: any = {
   },
 
   klaviyo: {
-    service: new KlaviyoService(),
+    // Create a new KlaviyoService instance per request to avoid cross-client
+    // session/conversionMetricId contamination when processing concurrently
+    get service() { return new KlaviyoService(); },
     method: "fetchKlaviyoRecords",
     buildParams: (connectionData:any) => ({
       connectionId: connectionData?._id,

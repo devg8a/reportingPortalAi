@@ -16,23 +16,35 @@ import { getCentralStorageModel } from "../../../db/schema/dynamic-central-model
 import { getMongoDbObjectId } from "../../../helper/helper";
 import ErrorLogs from '../../../db/models/errorLogs';
 
-// ─── Reporting Rate Limiter ─────────────────────────────────────
-// Enforces Klaviyo reporting endpoint limits simultaneously:
-//   Burst:  1 request / second
-//   Steady: 2 requests / minute
-//   Daily:  225 requests / day
+// ─── Endpoint-Aware Rate Limiter ────────────────────────────────
+// Configurable per-endpoint rate limits for Klaviyo API:
+//   Reporting (campaign-values-reports, flow-series-reports): Burst 1/s, Steady 2/m, Daily 225/d
+//   Campaigns:  Burst 10/s, Steady 150/m
+//   Segments:   Burst 75/s, Steady 700/m
+//   Lists:      Burst 75/s, Steady 700/m
+//   Flows:      Burst 75/s, Steady 700/m (default)
 
-interface ReportingRateLimiterState {
+interface RateLimitConfig {
+    burstLimit: number;      // max requests per second
+    steadyLimit: number;     // max requests per minute
+    dailyLimit?: number;     // max requests per day (optional)
+}
+
+interface RateLimiterState {
     burstTimestamps: number[];
     steadyTimestamps: number[];
     dailyCount: number;
     dailyResetAt: number;
 }
 
-class ReportingRateLimiter {
-    private state: ReportingRateLimiterState;
+class EndpointRateLimiter {
+    private state: RateLimiterState;
+    private config: RateLimitConfig;
+    private name: string;
 
-    constructor() {
+    constructor(name: string, config: RateLimitConfig) {
+        this.name = name;
+        this.config = config;
         const now = Date.now();
         this.state = {
             burstTimestamps: [],
@@ -49,7 +61,7 @@ class ReportingRateLimiter {
     }
 
     private cleanup(now: number): void {
-        if (now >= this.state.dailyResetAt) {
+        if (this.config.dailyLimit && now >= this.state.dailyResetAt) {
             this.state.dailyCount = 0;
             this.state.dailyResetAt = this.getNextMidnight(now);
         }
@@ -66,16 +78,16 @@ class ReportingRateLimiter {
             const now = Date.now();
             this.cleanup(now);
 
-            if (this.state.dailyCount >= 225) {
+            if (this.config.dailyLimit && this.state.dailyCount >= this.config.dailyLimit) {
                 const waitMs = this.state.dailyResetAt - now;
                 logger.warn(
-                    `Klaviyo reporting daily limit reached (225/day). Waiting ${Math.ceil(waitMs / 1000)}s until reset.`
+                    `Klaviyo ${this.name} daily limit reached (${this.config.dailyLimit}/day). Waiting ${Math.ceil(waitMs / 1000)}s until reset.`
                 );
                 await this.sleep(waitMs + 1000);
                 continue;
             }
 
-            if (this.state.burstTimestamps.length >= 1) {
+            if (this.state.burstTimestamps.length >= this.config.burstLimit) {
                 const oldest = this.state.burstTimestamps[0];
                 const waitMs = 1000 - (now - oldest);
                 if (waitMs > 0) {
@@ -84,7 +96,7 @@ class ReportingRateLimiter {
                 }
             }
 
-            if (this.state.steadyTimestamps.length >= 2) {
+            if (this.state.steadyTimestamps.length >= this.config.steadyLimit) {
                 const oldest = this.state.steadyTimestamps[0];
                 const waitMs = 60_000 - (now - oldest);
                 if (waitMs > 0) {
@@ -96,7 +108,9 @@ class ReportingRateLimiter {
             const ts = Date.now();
             this.state.burstTimestamps.push(ts);
             this.state.steadyTimestamps.push(ts);
-            this.state.dailyCount++;
+            if (this.config.dailyLimit) {
+                this.state.dailyCount++;
+            }
             return;
         }
     }
@@ -105,6 +119,15 @@ class ReportingRateLimiter {
         return new Promise((resolve) => setTimeout(resolve, ms));
     }
 }
+
+// Pre-configured rate limiters per endpoint type (shared across instances)
+const RATE_LIMITERS = {
+    reporting: new EndpointRateLimiter('reporting', { burstLimit: 1, steadyLimit: 2, dailyLimit: 225 }),
+    campaigns: new EndpointRateLimiter('campaigns', { burstLimit: 10, steadyLimit: 150 }),
+    segments:  new EndpointRateLimiter('segments',  { burstLimit: 75, steadyLimit: 700 }),
+    lists:     new EndpointRateLimiter('lists',     { burstLimit: 75, steadyLimit: 700 }),
+    flows:     new EndpointRateLimiter('flows',     { burstLimit: 75, steadyLimit: 700 }),
+};
 
 // ─── Interfaces ─────────────────────────────────────────────────
 
@@ -255,21 +278,16 @@ const ALL_FLOW_STATISTICS = [
 
 export class KlaviyoService {
     private session: ApiKeySession;
-    private reportingLimiter: ReportingRateLimiter;
-
-    constructor() {
-        this.reportingLimiter = new ReportingRateLimiter();
-    }
 
     private initializeSession(privateKey: string) {
-        if (!this.session) {
-            const retry = new RetryWithExponentialBackoff({
-                retryCodes: [429, 503, 504, 524],
-                numRetries: 5,
-                maxInterval: 120,
-            });
-            this.session = new ApiKeySession(privateKey, retry);
-        }
+        // Always create a fresh session per request to avoid cross-client contamination
+        // when multiple clients are processed concurrently
+        const retry = new RetryWithExponentialBackoff({
+            retryCodes: [429, 503, 504, 524],
+            numRetries: 5,
+            maxInterval: 120,
+        });
+        this.session = new ApiKeySession(privateKey, retry);
     }
 
     // ─── Date helpers ───────────────────────────────────────────
@@ -320,6 +338,7 @@ export class KlaviyoService {
         const filter = `greater-or-equal(updated_at,${start}),less-or-equal(updated_at,${end}),equals(messages.channel,'${channel}'),any(status,[${statusesStr}])`;
 
         return this.paginateAll(async (cursor) => {
+            await RATE_LIMITERS.campaigns.acquire();
             const api = new CampaignsApi(this.session);
             const resp = await api.getCampaigns(filter, {
                 fieldsCampaign: [
@@ -336,7 +355,7 @@ export class KlaviyoService {
             const body = resp.body as unknown as Record<string, unknown>;
             const data = ((body?.data ?? []) as unknown[]).map(item => ({
                 ...(item as Record<string, unknown>),
-                channel, // 👈 inject here
+                channel,
             }));
             const nextCursor = this.extractCursor(body);
             return { data, nextCursor };
@@ -374,7 +393,7 @@ export class KlaviyoService {
 
         const makeRequest = async (statistics: readonly string[]): Promise<void> => {
             do {
-                await this.reportingLimiter.acquire();
+                await RATE_LIMITERS.reporting.acquire();
                 const api = new ReportingApi(this.session);
                 const requestBody: CampaignValuesRequestDTO = {
                     data: {
@@ -469,6 +488,7 @@ export class KlaviyoService {
             const filter = `any(id,[${idsStr}])`;
 
             await this.paginateAll(async (cursor) => {
+                await RATE_LIMITERS.segments.acquire();
                 const api = new SegmentsApi(this.session);
                 const resp = await api.getSegments({
                     filter,
@@ -507,6 +527,7 @@ export class KlaviyoService {
             const filter = `any(id,[${idsStr}])`;
 
             await this.paginateAll(async (cursor) => {
+                await RATE_LIMITERS.lists.acquire();
                 const api = new ListsApi(this.session);
                 const resp = await api.getLists({
                     filter,
@@ -562,6 +583,7 @@ export class KlaviyoService {
             const idsStr = batch.map((id) => `"${id}"`).join(',');
             const filter = `any(id,[${idsStr}])`;
             const batchResults = await this.paginateAll(async (cursor) => {
+                await RATE_LIMITERS.flows.acquire();
                 const api = new FlowsApi(this.session);
                 const resp = await api.getFlows({
                     fieldsFlow: ['name', 'status', 'archived', 'trigger_type'],
@@ -603,7 +625,7 @@ export class KlaviyoService {
 
         const makeRequest = async (statistics: readonly string[]): Promise<void> => {
             do {
-                await this.reportingLimiter.acquire();
+                await RATE_LIMITERS.reporting.acquire();
                 const api = new ReportingApi(this.session);
                 const requestBody: FlowSeriesRequestDTO = {
                     data: {
@@ -687,8 +709,50 @@ export class KlaviyoService {
             }
         }
 
+        const buildAudienceMap = (
+            entries?: unknown[] | Record<string, AudienceInfo>
+        ): Record<string, AudienceInfo> => {
+            const result: Record<string, { name: string | null, type: string | null }> = {};
+            if (!entries) return result;
+
+            // Handle already-normalized audience maps from DB (object with id keys)
+            if (!Array.isArray(entries)) {
+                for (const [id, info] of Object.entries(entries)) {
+                    result[id] = { name: info?.name ?? null, type: info?.type ?? null };
+                }
+                return result;
+            }
+
+            for (const entry of entries) {
+                let id: string | undefined;
+                if (typeof entry === 'string') {
+                    id = entry;
+                } else if (entry && typeof entry === 'object') {
+                    id = (entry as { id?: string }).id;
+                }
+                if (id) {
+                    const audience = audienceNameMap.get(id);
+                    result[id] = { name: audience?.name ?? null, type: audience?.type ?? null };
+                }
+            }
+            return result;
+        };
+
         const normalized: NormalizedCampaign[] = [];
         for (const c of rawCampaigns) {
+            const raw = c as Record<string, unknown>;
+
+            // Check if this is a DB-sourced campaign (already normalized, flat structure)
+            if (raw.type === 'campaign' && typeof raw.name === 'string' && !raw.attributes) {
+                const dbCampaign = raw as unknown as NormalizedCampaign;
+                normalized.push({
+                    ...dbCampaign,
+                    statistics: statsById.get(dbCampaign.id) ?? dbCampaign.statistics ?? {},
+                });
+                continue;
+            }
+
+            // API-sourced campaign with attributes wrapper
             const campaign = c as {
                 id: string;
                 channel?: string;
@@ -708,30 +772,6 @@ export class KlaviyoService {
             const attrs = campaign.attributes ?? {};
             const rawSendTime = attrs.sendTime ?? '';
             const sendDate = rawSendTime ? new Date(rawSendTime).toISOString().split('T')[0] : '';
-
-            if (sendDate && (sendDate < requestData?.startDate || sendDate > requestData?.endDate)) {
-                continue;
-            }
-
-            const buildAudienceMap = (
-                entries?: unknown[]
-            ): Record<string, AudienceInfo> => {
-                const result: Record<string, { name: string | null, type: string | null }> = {};
-                if (!entries) return result;
-                for (const entry of entries) {
-                    let id: string | undefined;
-                    if (typeof entry === 'string') {
-                        id = entry;
-                    } else if (entry && typeof entry === 'object') {
-                        id = (entry as { id?: string }).id;
-                    }
-                    if (id) {
-                        const audience = audienceNameMap.get(id);
-                        result[id] = { name: audience?.name ?? null, type: audience?.type ?? null };
-                    }
-                }
-                return result;
-            };
 
             normalized.push({
                 id: campaign.id,
@@ -828,26 +868,108 @@ export class KlaviyoService {
     // PUBLIC API — New methods (campaigns + flows + audience)
     // ═══════════════════════════════════════════════════════════
 
+    // ─── DB Lookup for out-of-range campaigns ────────────────
+    // Campaign values report may return campaigns whose send_time is outside
+    // the selected date range. Instead of extending the API date range to 90 days,
+    // we look up those campaigns from DB (central_storage) to save API calls.
+
+    private async lookupCampaignsFromDb(
+        campaignIds: string[],
+        clientId: string,
+        connectionId: string,
+    ): Promise<unknown[]> {
+        if (campaignIds.length === 0) return [];
+
+        const campaignIdSet = new Set(campaignIds);
+        const foundCampaigns: unknown[] = [];
+
+        // Search last 3 months of central storage for these campaign IDs
+        const now = new Date();
+        const threeMonthsAgo = new Date(now);
+        threeMonthsAgo.setUTCMonth(threeMonthsAgo.getUTCMonth() - 3);
+
+        const startYear = threeMonthsAgo.getUTCFullYear();
+        const endYear = now.getUTCFullYear();
+
+        for (let year = startYear; year <= endYear; year++) {
+            const model = getCentralStorageModel(`central_storage_${year}`);
+            const records = await model.find({
+                client_id: getMongoDbObjectId(clientId),
+                connection_id: getMongoDbObjectId(connectionId),
+                network: 'klaviyo',
+                date: {
+                    $gte: threeMonthsAgo,
+                    $lte: now,
+                },
+            }).select('data.campaigns').lean();
+
+            for (const record of records) {
+                const campaigns = (record as { data?: { campaigns?: unknown[] } })?.data?.campaigns ?? [];
+                for (const campaign of campaigns) {
+                    const c = campaign as { id?: string };
+                    if (c.id && campaignIdSet.has(c.id)) {
+                        foundCampaigns.push(campaign);
+                        campaignIdSet.delete(c.id);
+                    }
+                }
+                if (campaignIdSet.size === 0) break;
+            }
+            if (campaignIdSet.size === 0) break;
+        }
+
+        if (campaignIdSet.size > 0) {
+            logger.warn(`Klaviyo: ${campaignIdSet.size} campaign(s) not found in DB: ${Array.from(campaignIdSet).join(', ')}`);
+        }
+
+        return foundCampaigns;
+    }
+
     async getCampaignsWithMetrics(requestData: any): Promise<NormalizedCampaign[]> {
         try {
+            // Fetch campaigns from API only for the selected date range
             logger.info('Klaviyo: Fetching campaign list...');
-            const campaignRequestData = {
-                ...requestData,
-                startDate: this.get90DaysAgo(requestData?.endDate),
-            };
-            const rawCampaigns = await this.fetchCampaignList(campaignRequestData);
-            logger.info(`Klaviyo: Fetched ${rawCampaigns.length} campaigns`);
+            const rawCampaigns = await this.fetchCampaignList(requestData);
+            logger.info(`Klaviyo: Fetched ${rawCampaigns.length} campaigns from API`);
 
             logger.info('Klaviyo: Fetching campaign values report...');
-            const valuesReport = await this.fetchCampaignValuesReport(campaignRequestData);
+            const valuesReport = await this.fetchCampaignValuesReport(requestData);
             logger.info(`Klaviyo: Fetched ${valuesReport.length} campaign value entries`);
 
+            // Identify campaign IDs in values report that are missing from the API response
+            const apiCampaignIds = new Set(
+                rawCampaigns.map((c) => (c as { id?: string })?.id).filter(Boolean)
+            );
+            const reportCampaignIds = valuesReport
+                .map((entry) => {
+                    const e = entry as { groupings?: { campaign_id?: string } };
+                    return e.groupings?.campaign_id;
+                })
+                .filter((id): id is string => !!id);
+
+            const missingCampaignIds = reportCampaignIds.filter((id) => !apiCampaignIds.has(id));
+            const uniqueMissingIds = [...new Set(missingCampaignIds)];
+
+            // Look up missing campaigns from DB instead of extending API date range
+            let dbCampaigns: unknown[] = [];
+            if (uniqueMissingIds.length > 0 && requestData?.clientId && requestData?.connectionId) {
+                logger.info(`Klaviyo: ${uniqueMissingIds.length} campaign(s) in values report not found via API, looking up from DB...`);
+                dbCampaigns = await this.lookupCampaignsFromDb(
+                    uniqueMissingIds,
+                    requestData.clientId,
+                    requestData.connectionId,
+                );
+                logger.info(`Klaviyo: Found ${dbCampaigns.length} campaign(s) from DB`);
+            }
+
+            // Merge API campaigns with DB-sourced campaigns
+            const allCampaigns = [...rawCampaigns, ...dbCampaigns];
+
             logger.info('Klaviyo: Enriching audience names...');
-            const audienceIds = this.collectAudienceIds(rawCampaigns);
+            const audienceIds = this.collectAudienceIds(allCampaigns);
             logger.info(`Klaviyo: Found ${audienceIds.size} unique audience IDs to resolve`);
             const audienceNameMap = await this.enrichAudiences(audienceIds);
 
-            const campaigns = this.normalizeCampaigns(rawCampaigns, valuesReport, audienceNameMap, campaignRequestData);
+            const campaigns = this.normalizeCampaigns(allCampaigns, valuesReport, audienceNameMap, requestData);
             logger.info(`Klaviyo: Normalized ${campaigns.length} campaigns with metrics`);
             return campaigns;
         } catch (error) {
